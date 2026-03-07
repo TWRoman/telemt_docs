@@ -124,6 +124,7 @@ pub struct MePool {
     pub(super) me_adaptive_floor_target_writers_total: AtomicU64,
     pub(super) proxy_map_v4: Arc<RwLock<HashMap<i32, Vec<(IpAddr, u16)>>>>,
     pub(super) proxy_map_v6: Arc<RwLock<HashMap<i32, Vec<(IpAddr, u16)>>>>,
+    pub(super) endpoint_dc_map: Arc<RwLock<HashMap<SocketAddr, Option<i32>>>>,
     pub(super) default_dc: AtomicI32,
     pub(super) next_writer_id: AtomicU64,
     pub(super) ping_tracker: Arc<Mutex<HashMap<i64, (std::time::Instant, u64)>>>,
@@ -254,6 +255,7 @@ impl MePool {
         me_route_inline_recovery_attempts: u32,
         me_route_inline_recovery_wait_ms: u64,
     ) -> Arc<Self> {
+        let endpoint_dc_map = Self::build_endpoint_dc_map_from_maps(&proxy_map_v4, &proxy_map_v6);
         let registry = Arc::new(ConnRegistry::new());
         registry.update_route_backpressure_policy(
             me_route_backpressure_base_timeout_ms,
@@ -355,6 +357,7 @@ impl MePool {
             pool_size: 2,
             proxy_map_v4: Arc::new(RwLock::new(proxy_map_v4)),
             proxy_map_v6: Arc::new(RwLock::new(proxy_map_v6)),
+            endpoint_dc_map: Arc::new(RwLock::new(endpoint_dc_map)),
             default_dc: AtomicI32::new(default_dc.unwrap_or(2)),
             next_writer_id: AtomicU64::new(1),
             ping_tracker: Arc::new(Mutex::new(HashMap::new())),

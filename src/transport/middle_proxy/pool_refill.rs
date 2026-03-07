@@ -172,7 +172,7 @@ impl MePool {
         let target_dc = self.resolve_dc_for_endpoint(addr).await;
 
         if self.decision.ipv4_me {
-            let map = self.proxy_map_v4.read().await.clone();
+            let map = self.proxy_map_v4.read().await;
             if let Some(addrs) = map.get(&target_dc) {
                 for (ip, port) in addrs {
                     endpoints.insert(SocketAddr::new(*ip, *port));
@@ -181,7 +181,7 @@ impl MePool {
         }
 
         if self.decision.ipv6_me {
-            let map = self.proxy_map_v6.read().await.clone();
+            let map = self.proxy_map_v6.read().await;
             if let Some(addrs) = map.get(&target_dc) {
                 for (ip, port) in addrs {
                     endpoints.insert(SocketAddr::new(*ip, *port));

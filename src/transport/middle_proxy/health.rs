@@ -22,6 +22,10 @@ const IDLE_REFRESH_TRIGGER_BASE_SECS: u64 = 45;
 const IDLE_REFRESH_TRIGGER_JITTER_SECS: u64 = 5;
 const IDLE_REFRESH_RETRY_SECS: u64 = 8;
 const IDLE_REFRESH_SUCCESS_GUARD_SECS: u64 = 5;
+const HEALTH_RECONNECT_BUDGET_PER_CORE: usize = 2;
+const HEALTH_RECONNECT_BUDGET_PER_DC: usize = 1;
+const HEALTH_RECONNECT_BUDGET_MIN: usize = 4;
+const HEALTH_RECONNECT_BUDGET_MAX: usize = 128;
 
 #[derive(Debug, Clone)]
 struct DcFloorPlanEntry {
@@ -114,22 +118,23 @@ async fn check_family(
         return;
     }
 
-    let map = match family {
-        IpFamily::V4 => pool.proxy_map_v4.read().await.clone(),
-        IpFamily::V6 => pool.proxy_map_v6.read().await.clone(),
-    };
-
     let mut dc_endpoints = HashMap::<i32, Vec<SocketAddr>>::new();
-    for (dc, addrs) in map {
-        let entry = dc_endpoints.entry(dc).or_default();
-        for (ip, port) in addrs {
+    let map_guard = match family {
+        IpFamily::V4 => pool.proxy_map_v4.read().await,
+        IpFamily::V6 => pool.proxy_map_v6.read().await,
+    };
+    for (dc, addrs) in map_guard.iter() {
+        let entry = dc_endpoints.entry(*dc).or_default();
+        for (ip, port) in addrs.iter().copied() {
             entry.push(SocketAddr::new(ip, port));
         }
     }
+    drop(map_guard);
     for endpoints in dc_endpoints.values_mut() {
         endpoints.sort_unstable();
         endpoints.dedup();
     }
+    let mut reconnect_budget = health_reconnect_budget(pool, dc_endpoints.len());
 
     if pool.floor_mode() == MeFloorMode::Static {
         adaptive_idle_since.clear();
@@ -200,6 +205,7 @@ async fn check_family(
                 required,
                 outage_backoff,
                 outage_next_attempt,
+                &mut reconnect_budget,
             )
             .await;
             continue;
@@ -256,6 +262,24 @@ async fn check_family(
         let missing = required - alive;
 
         let now = Instant::now();
+        if reconnect_budget == 0 {
+            let base_ms = pool.me_reconnect_backoff_base.as_millis() as u64;
+            let next_ms = (*backoff.get(&key).unwrap_or(&base_ms)).max(base_ms);
+            let jitter = next_ms / JITTER_FRAC_NUM;
+            let wait = Duration::from_millis(next_ms)
+                + Duration::from_millis(rand::rng().random_range(0..=jitter.max(1)));
+            next_attempt.insert(key, now + wait);
+            debug!(
+                dc = %dc,
+                ?family,
+                alive,
+                required,
+                endpoint_count = endpoints.len(),
+                reconnect_budget,
+                "Skipping reconnect due to per-tick health reconnect budget"
+            );
+            continue;
+        }
         if let Some(ts) = next_attempt.get(&key)
             && now < *ts
         {
@@ -281,6 +305,10 @@ async fn check_family(
 
         let mut restored = 0usize;
         for _ in 0..missing {
+            if reconnect_budget == 0 {
+                break;
+            }
+            reconnect_budget = reconnect_budget.saturating_sub(1);
             if pool.floor_mode() == MeFloorMode::Adaptive
                 && pool.active_writer_count_total().await >= floor_plan.global_cap_effective_total
             {
@@ -381,6 +409,15 @@ async fn check_family(
             *v = v.saturating_sub(1);
         }
     }
+}
+
+fn health_reconnect_budget(pool: &Arc<MePool>, dc_groups: usize) -> usize {
+    let cpu_cores = pool.adaptive_floor_effective_cpu_cores().max(1);
+    let by_cpu = cpu_cores.saturating_mul(HEALTH_RECONNECT_BUDGET_PER_CORE);
+    let by_dc = dc_groups.saturating_mul(HEALTH_RECONNECT_BUDGET_PER_DC);
+    by_cpu
+        .saturating_add(by_dc)
+        .clamp(HEALTH_RECONNECT_BUDGET_MIN, HEALTH_RECONNECT_BUDGET_MAX)
 }
 
 fn adaptive_floor_class_min(
@@ -816,6 +853,7 @@ async fn recover_single_endpoint_outage(
     required: usize,
     outage_backoff: &mut HashMap<(i32, IpFamily), u64>,
     outage_next_attempt: &mut HashMap<(i32, IpFamily), Instant>,
+    reconnect_budget: &mut usize,
 ) {
     let now = Instant::now();
     if let Some(ts) = outage_next_attempt.get(&key)
@@ -825,6 +863,18 @@ async fn recover_single_endpoint_outage(
     }
 
     let (min_backoff_ms, max_backoff_ms) = pool.single_endpoint_outage_backoff_bounds_ms();
+    if *reconnect_budget == 0 {
+        outage_next_attempt.insert(key, now + Duration::from_millis(min_backoff_ms.max(250)));
+        debug!(
+            dc = %key.0,
+            family = ?key.1,
+            %endpoint,
+            required,
+            "Single-endpoint outage reconnect deferred by health reconnect budget"
+        );
+        return;
+    }
+    *reconnect_budget = (*reconnect_budget).saturating_sub(1);
     pool.stats
         .increment_me_single_endpoint_outage_reconnect_attempt_total();
 

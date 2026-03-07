@@ -378,12 +378,16 @@ impl MePool {
                 return self.has_candidate_for_target_dc(target_dc).await;
             }
 
-            let remaining = deadline.saturating_duration_since(now);
-            let sleep_for = remaining.min(Duration::from_millis(25));
             let waiter = self.writer_available.notified();
-            tokio::select! {
-                _ = waiter => {}
-                _ = tokio::time::sleep(sleep_for) => {}
+            if self.has_candidate_for_target_dc(target_dc).await {
+                return true;
+            }
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                return self.has_candidate_for_target_dc(target_dc).await;
+            }
+            if tokio::time::timeout(remaining, waiter).await.is_err() {
+                return self.has_candidate_for_target_dc(target_dc).await;
             }
         }
     }
@@ -423,11 +427,11 @@ impl MePool {
         self.stats.increment_me_async_recovery_trigger_total();
         let mut seen = HashSet::<SocketAddr>::new();
         for family in self.family_order() {
-            let map = match family {
-                IpFamily::V4 => self.proxy_map_v4.read().await.clone(),
-                IpFamily::V6 => self.proxy_map_v6.read().await.clone(),
+            let map_guard = match family {
+                IpFamily::V4 => self.proxy_map_v4.read().await,
+                IpFamily::V6 => self.proxy_map_v6.read().await,
             };
-            for addrs in map.values() {
+            for addrs in map_guard.values() {
                 for (ip, port) in addrs {
                     let addr = SocketAddr::new(*ip, *port);
                     if seen.insert(addr) {
@@ -448,13 +452,13 @@ impl MePool {
         let lookup_keys = self.dc_lookup_chain_for_target(key);
 
         for family in self.family_order() {
-            let map = match family {
-                IpFamily::V4 => self.proxy_map_v4.read().await.clone(),
-                IpFamily::V6 => self.proxy_map_v6.read().await.clone(),
+            let map_guard = match family {
+                IpFamily::V4 => self.proxy_map_v4.read().await,
+                IpFamily::V6 => self.proxy_map_v6.read().await,
             };
             let mut family_selected = Vec::<SocketAddr>::new();
             for lookup in lookup_keys.iter().copied() {
-                if let Some(addrs) = map.get(&lookup) {
+                if let Some(addrs) = map_guard.get(&lookup) {
                     for (ip, port) in addrs {
                         family_selected.push(SocketAddr::new(*ip, *port));
                     }
@@ -557,7 +561,7 @@ impl MePool {
         include_warm: bool,
     ) -> Vec<usize> {
         let key = target_dc as i32;
-        let mut preferred = Vec::<SocketAddr>::new();
+        let mut preferred = HashSet::<SocketAddr>::new();
         let lookup_keys = self.dc_lookup_chain_for_target(key);
 
         for family in self.family_order() {
@@ -574,7 +578,9 @@ impl MePool {
                     break;
                 }
             }
-            preferred.extend(family_selected);
+            for endpoint in family_selected {
+                preferred.insert(endpoint);
+            }
 
             drop(map_guard);
 
