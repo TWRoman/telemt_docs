@@ -28,6 +28,7 @@ mod model;
 mod runtime_edge;
 mod runtime_init;
 mod runtime_min;
+mod runtime_selftest;
 mod runtime_stats;
 mod runtime_watch;
 mod runtime_zero;
@@ -48,6 +49,7 @@ use runtime_min::{
     build_runtime_me_pool_state_data, build_runtime_me_quality_data, build_runtime_nat_stun_data,
     build_runtime_upstream_quality_data, build_security_whitelist_data,
 };
+use runtime_selftest::build_runtime_me_selftest_data;
 use runtime_stats::{
     MinimalCacheEntry, build_dcs_data, build_me_writers_data, build_minimal_all_data,
     build_upstreams_data, build_zero_all_data,
@@ -331,6 +333,11 @@ async fn handle(
             ("GET", "/v1/runtime/nat_stun") => {
                 let revision = current_revision(&shared.config_path).await?;
                 let data = build_runtime_nat_stun_data(shared.as_ref()).await;
+                Ok(success_response(StatusCode::OK, data, revision))
+            }
+            ("GET", "/v1/runtime/me-selftest") => {
+                let revision = current_revision(&shared.config_path).await?;
+                let data = build_runtime_me_selftest_data(shared.as_ref()).await;
                 Ok(success_response(StatusCode::OK, data, revision))
             }
             ("GET", "/v1/runtime/connections/summary") => {

@@ -33,6 +33,7 @@ use super::codec::{
     cbc_decrypt_inplace, cbc_encrypt_padded, parse_handshake_flags, parse_nonce_payload,
     read_rpc_frame_plaintext, rpc_crc,
 };
+use super::selftest::{BndAddrStatus, BndPortStatus, record_bnd_status};
 use super::wire::{extract_ip_material, IpMaterial};
 use super::MePool;
 
@@ -129,6 +130,14 @@ impl MePool {
             upstream_egress.map(|info| info.route_kind),
             Some(UpstreamRouteKind::Socks4 | UpstreamRouteKind::Socks5)
         )
+    }
+
+    fn bnd_port_status(bound: Option<SocketAddr>) -> BndPortStatus {
+        match bound {
+            Some(addr) if addr.port() == 0 => BndPortStatus::Zero,
+            Some(_) => BndPortStatus::Ok,
+            None => BndPortStatus::Error,
+        }
     }
 
     /// TCP connect with timeout + return RTT in milliseconds.
@@ -239,7 +248,27 @@ impl MePool {
             IpFamily::V6
         };
         let is_socks_route = Self::is_socks_route(upstream_egress);
+        let raw_socks_bound_addr = if is_socks_route {
+            upstream_egress.and_then(|info| info.socks_bound_addr)
+        } else {
+            None
+        };
         let socks_bound_addr = Self::select_socks_bound_addr(family, upstream_egress);
+        let bnd_addr_status = if !is_socks_route {
+            BndAddrStatus::Error
+        } else if raw_socks_bound_addr.is_some() && socks_bound_addr.is_none() {
+            BndAddrStatus::Bogon
+        } else if socks_bound_addr.is_some() {
+            BndAddrStatus::Ok
+        } else {
+            BndAddrStatus::Error
+        };
+        let bnd_port_status = if is_socks_route {
+            Self::bnd_port_status(raw_socks_bound_addr)
+        } else {
+            BndPortStatus::Error
+        };
+        record_bnd_status(bnd_addr_status, bnd_port_status, raw_socks_bound_addr);
         let reflected = if let Some(bound) = socks_bound_addr {
             Some(bound)
         } else if is_socks_route {

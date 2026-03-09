@@ -15,6 +15,7 @@ use crate::error::Result;
 use super::MePool;
 use super::rotation::{MeReinitTrigger, enqueue_reinit_trigger};
 use super::secret::download_proxy_secret_with_max_len;
+use super::selftest::record_timeskew_sample;
 use std::time::SystemTime;
 
 async fn retry_fetch(url: &str) -> Option<ProxyConfigData> {
@@ -109,6 +110,7 @@ pub async fn fetch_proxy_config_with_raw(url: &str) -> Result<(ProxyConfigData, 
         })
     {
         let skew_secs = skew.as_secs();
+        record_timeskew_sample("proxy_config_date_header", skew_secs);
         if skew_secs > 60 {
             warn!(skew_secs, "Time skew >60s detected from fetch_proxy_config Date header");
         } else if skew_secs > 30 {
