@@ -16,6 +16,7 @@ use tracing::{debug, info, warn};
 
 use crate::config::ProxyConfig;
 use crate::ip_tracker::UserIpTracker;
+use crate::proxy::route_mode::RouteRuntimeController;
 use crate::startup::StartupTracker;
 use crate::stats::Stats;
 use crate::transport::middle_proxy::MePool;
@@ -84,6 +85,7 @@ pub(super) struct ApiShared {
     pub(super) request_id: Arc<AtomicU64>,
     pub(super) runtime_state: Arc<ApiRuntimeState>,
     pub(super) startup_tracker: Arc<StartupTracker>,
+    pub(super) route_runtime: Arc<RouteRuntimeController>,
 }
 
 impl ApiShared {
@@ -101,6 +103,7 @@ pub async fn serve(
     stats: Arc<Stats>,
     ip_tracker: Arc<UserIpTracker>,
     me_pool: Arc<RwLock<Option<Arc<MePool>>>>,
+    route_runtime: Arc<RouteRuntimeController>,
     upstream_manager: Arc<UpstreamManager>,
     config_rx: watch::Receiver<Arc<ProxyConfig>>,
     admission_rx: watch::Receiver<bool>,
@@ -147,6 +150,7 @@ pub async fn serve(
         request_id: Arc::new(AtomicU64::new(1)),
         runtime_state: runtime_state.clone(),
         startup_tracker,
+        route_runtime,
     });
 
     spawn_runtime_watchers(
