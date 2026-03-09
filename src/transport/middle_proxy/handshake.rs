@@ -33,7 +33,7 @@ use super::codec::{
     cbc_decrypt_inplace, cbc_encrypt_padded, parse_handshake_flags, parse_nonce_payload,
     read_rpc_frame_plaintext, rpc_crc,
 };
-use super::selftest::{BndAddrStatus, BndPortStatus, record_bnd_status};
+use super::selftest::{BndAddrStatus, BndPortStatus, record_bnd_status, record_upstream_bnd_status};
 use super::wire::{extract_ip_material, IpMaterial};
 use super::MePool;
 
@@ -299,6 +299,18 @@ impl MePool {
 
         let local_addr_nat = self.translate_our_addr_with_reflection(local_addr, reflected);
         let peer_addr_nat = SocketAddr::new(self.translate_ip_for_nat(peer_addr.ip()), peer_addr.port());
+        if let Some(upstream_info) = upstream_egress {
+            let client_ip_for_kdf = socks_bound_addr
+                .map(|value| value.ip())
+                .unwrap_or(local_addr_nat.ip());
+            record_upstream_bnd_status(
+                upstream_info.upstream_id,
+                bnd_addr_status,
+                bnd_port_status,
+                raw_socks_bound_addr,
+                Some(client_ip_for_kdf),
+            );
+        }
         let (mut rd, mut wr) = tokio::io::split(stream);
 
         let my_nonce: [u8; 16] = rng.bytes(16).try_into().unwrap();
