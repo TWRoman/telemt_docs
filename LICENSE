@@ -31,12 +31,11 @@ permission from the Telemt project maintainers.
 
 #### 4 Binary Distribution Transparency
 
-If you distribute compiled binaries of the Software, you must make the
-corresponding source code and build instructions available to recipients
-of those binaries.
+If you distribute compiled binaries of the Software, you are encouraged to
+provide access to the corresponding source code and build instructions.
 
-This requirement exists to preserve transparency and allow verification
-of distributed builds.
+This helps preserve transparency and allows recipients to verify the
+integrity and reproducibility of distributed builds.
 
 #### 5 Patent Grant
 
