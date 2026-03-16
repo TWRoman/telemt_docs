@@ -232,6 +232,9 @@ where
     if mask_write.write_all(initial_data).await.is_err() {
         return;
     }
+    if mask_write.flush().await.is_err() {
+        return;
+    }
 
     let mut client_buf = vec![0u8; MASK_BUFFER_SIZE];
     let mut mask_buf = vec![0u8; MASK_BUFFER_SIZE];

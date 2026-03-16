@@ -122,6 +122,12 @@ fn detect_client_type_covers_ssh_port_scanner_and_unknown() {
     assert_eq!(detect_client_type(b"random-binary-payload"), "unknown");
 }
 
+#[test]
+fn detect_client_type_len_boundary_9_vs_10_bytes() {
+    assert_eq!(detect_client_type(b"123456789"), "port-scanner");
+    assert_eq!(detect_client_type(b"1234567890"), "unknown");
+}
+
 #[tokio::test]
 async fn beobachten_records_scanner_class_when_mask_is_disabled() {
     let mut config = ProxyConfig::default();

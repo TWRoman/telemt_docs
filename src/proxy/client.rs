@@ -4,7 +4,10 @@ use std::future::Future;
 use std::net::{IpAddr, SocketAddr};
 use std::pin::Pin;
 use std::sync::Arc;
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use ipnetwork::IpNetwork;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::time::timeout;
@@ -73,6 +76,20 @@ fn record_handshake_failure_class(
     record_beobachten_class(beobachten, config, peer_ip, class);
 }
 
+fn is_trusted_proxy_source(peer_ip: IpAddr, trusted: &[IpNetwork]) -> bool {
+    if trusted.is_empty() {
+        static EMPTY_PROXY_TRUST_WARNED: OnceLock<AtomicBool> = OnceLock::new();
+        let warned = EMPTY_PROXY_TRUST_WARNED.get_or_init(|| AtomicBool::new(false));
+        if !warned.swap(true, Ordering::Relaxed) {
+            warn!(
+                "PROXY protocol enabled but server.proxy_protocol_trusted_cidrs is empty; rejecting all PROXY headers by default"
+            );
+        }
+        return false;
+    }
+    trusted.iter().any(|cidr| cidr.contains(peer_ip))
+}
+
 pub async fn handle_client_stream<S>(
     mut stream: S,
     peer: SocketAddr,
@@ -106,6 +123,17 @@ where
         );
         match timeout(proxy_header_timeout, parse_proxy_protocol(&mut stream, peer)).await {
             Ok(Ok(info)) => {
+                if !is_trusted_proxy_source(peer.ip(), &config.server.proxy_protocol_trusted_cidrs)
+                {
+                    stats.increment_connects_bad();
+                    warn!(
+                        peer = %peer,
+                        trusted = ?config.server.proxy_protocol_trusted_cidrs,
+                        "Rejecting PROXY protocol header from untrusted source"
+                    );
+                    record_beobachten_class(&beobachten, &config, peer.ip(), "other");
+                    return Err(ProxyError::InvalidProxyProtocol);
+                }
                 debug!(
                     peer = %peer,
                     client = %info.src_addr,
@@ -462,6 +490,24 @@ impl RunningClientHandler {
             .await
             {
                 Ok(Ok(info)) => {
+                    if !is_trusted_proxy_source(
+                        self.peer.ip(),
+                        &self.config.server.proxy_protocol_trusted_cidrs,
+                    ) {
+                        self.stats.increment_connects_bad();
+                        warn!(
+                            peer = %self.peer,
+                            trusted = ?self.config.server.proxy_protocol_trusted_cidrs,
+                            "Rejecting PROXY protocol header from untrusted source"
+                        );
+                        record_beobachten_class(
+                            &self.beobachten,
+                            &self.config,
+                            self.peer.ip(),
+                            "other",
+                        );
+                        return Err(ProxyError::InvalidProxyProtocol);
+                    }
                     debug!(
                         peer = %self.peer,
                         client = %info.src_addr,
@@ -768,7 +814,7 @@ impl RunningClientHandler {
                     client_writer,
                     success,
                     pool.clone(),
-                    stats,
+                    stats.clone(),
                     config,
                     buffer_pool,
                     local_addr,
@@ -785,7 +831,7 @@ impl RunningClientHandler {
                     client_writer,
                     success,
                     upstream_manager,
-                    stats,
+                    stats.clone(),
                     config,
                     buffer_pool,
                     rng,
@@ -802,7 +848,7 @@ impl RunningClientHandler {
                 client_writer,
                 success,
                 upstream_manager,
-                stats,
+                stats.clone(),
                 config,
                 buffer_pool,
                 rng,
@@ -813,6 +859,7 @@ impl RunningClientHandler {
             .await
         };
 
+        stats.decrement_user_curr_connects(&user);
         ip_tracker.remove_ip(&user, peer_addr.ip()).await;
         relay_result
     }
@@ -832,14 +879,6 @@ impl RunningClientHandler {
             });
         }
 
-        if let Some(limit) = config.access.user_max_tcp_conns.get(user)
-            && stats.get_user_curr_connects(user) >= *limit as u64
-        {
-            return Err(ProxyError::ConnectionLimitExceeded {
-                user: user.to_string(),
-            });
-        }
-
         if let Some(quota) = config.access.user_data_quota.get(user)
             && stats.get_user_total_octets(user) >= *quota
         {
@@ -848,9 +887,21 @@ impl RunningClientHandler {
             });
         }
 
+        let limit = config
+            .access
+            .user_max_tcp_conns
+            .get(user)
+            .map(|v| *v as u64);
+        if !stats.try_acquire_user_curr_connects(user, limit) {
+            return Err(ProxyError::ConnectionLimitExceeded {
+                user: user.to_string(),
+            });
+        }
+
         match ip_tracker.check_and_add(user, peer_addr.ip()).await {
             Ok(()) => {}
             Err(reason) => {
+                stats.decrement_user_curr_connects(user);
                 warn!(
                     user = %user,
                     ip = %peer_addr.ip(),

@@ -286,6 +286,26 @@ pub fn validate_tls_handshake(
     secrets: &[(String, Vec<u8>)],
     ignore_time_skew: bool,
 ) -> Option<TlsValidation> {
+    validate_tls_handshake_with_replay_window(
+        handshake,
+        secrets,
+        ignore_time_skew,
+        u64::from(BOOT_TIME_MAX_SECS),
+    )
+}
+
+/// Validate TLS ClientHello and cap the boot-time bypass by replay-cache TTL.
+///
+/// A boot-time timestamp is only accepted when it falls below both
+/// `BOOT_TIME_MAX_SECS` and the configured replay window, preventing timestamp
+/// reuse outside replay cache coverage.
+#[must_use]
+pub fn validate_tls_handshake_with_replay_window(
+    handshake: &[u8],
+    secrets: &[(String, Vec<u8>)],
+    ignore_time_skew: bool,
+    replay_window_secs: u64,
+) -> Option<TlsValidation> {
     // Only pay the clock syscall when we will actually compare against it.
     // If `ignore_time_skew` is set, a broken or unavailable system clock
     // must not block legitimate clients — that would be a DoS via clock failure.
@@ -295,7 +315,16 @@ pub fn validate_tls_handshake(
         0_i64
     };
 
-    validate_tls_handshake_at_time(handshake, secrets, ignore_time_skew, now)
+    let replay_window_u32 = u32::try_from(replay_window_secs).unwrap_or(u32::MAX);
+    let boot_time_cap_secs = BOOT_TIME_MAX_SECS.min(replay_window_u32);
+
+    validate_tls_handshake_at_time_with_boot_cap(
+        handshake,
+        secrets,
+        ignore_time_skew,
+        now,
+        boot_time_cap_secs,
+    )
 }
 
 fn system_time_to_unix_secs(now: SystemTime) -> Option<i64> {
@@ -311,6 +340,22 @@ fn validate_tls_handshake_at_time(
     secrets: &[(String, Vec<u8>)],
     ignore_time_skew: bool,
     now: i64,
+) -> Option<TlsValidation> {
+    validate_tls_handshake_at_time_with_boot_cap(
+        handshake,
+        secrets,
+        ignore_time_skew,
+        now,
+        BOOT_TIME_MAX_SECS,
+    )
+}
+
+fn validate_tls_handshake_at_time_with_boot_cap(
+    handshake: &[u8],
+    secrets: &[(String, Vec<u8>)],
+    ignore_time_skew: bool,
+    now: i64,
+    boot_time_cap_secs: u32,
 ) -> Option<TlsValidation> {
     if handshake.len() < TLS_DIGEST_POS + TLS_DIGEST_LEN + 1 {
         return None;
@@ -366,7 +411,7 @@ fn validate_tls_handshake_at_time(
         if !ignore_time_skew {
             // Allow very small timestamps (boot time instead of unix time)
             // This is a quirk in some clients that use uptime instead of real time
-            let is_boot_time = timestamp < BOOT_TIME_MAX_SECS;
+            let is_boot_time = timestamp < boot_time_cap_secs;
             if !is_boot_time {
                 let time_diff = now - i64::from(timestamp);
                 if !(TIME_SKEW_MIN..=TIME_SKEW_MAX).contains(&time_diff) {

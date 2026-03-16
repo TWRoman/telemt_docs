@@ -4,9 +4,11 @@
 
 use std::net::SocketAddr;
 use std::collections::HashSet;
+use std::net::IpAddr;
 use std::sync::Arc;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use dashmap::DashMap;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tracing::{debug, warn, trace};
 use zeroize::Zeroize;
@@ -22,10 +24,138 @@ use crate::config::ProxyConfig;
 use crate::tls_front::{TlsFrontCache, emulator};
 
 const ACCESS_SECRET_BYTES: usize = 16;
-static INVALID_SECRET_WARNED: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+static INVALID_SECRET_WARNED: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
+
+const AUTH_PROBE_TRACK_RETENTION_SECS: u64 = 10 * 60;
+const AUTH_PROBE_TRACK_MAX_ENTRIES: usize = 65_536;
+const AUTH_PROBE_BACKOFF_START_FAILS: u32 = 4;
+
+#[cfg(test)]
+const AUTH_PROBE_BACKOFF_BASE_MS: u64 = 1;
+#[cfg(not(test))]
+const AUTH_PROBE_BACKOFF_BASE_MS: u64 = 25;
+
+#[cfg(test)]
+const AUTH_PROBE_BACKOFF_MAX_MS: u64 = 16;
+#[cfg(not(test))]
+const AUTH_PROBE_BACKOFF_MAX_MS: u64 = 1_000;
+
+#[derive(Clone, Copy)]
+struct AuthProbeState {
+    fail_streak: u32,
+    blocked_until: Instant,
+    last_seen: Instant,
+}
+
+static AUTH_PROBE_STATE: OnceLock<DashMap<IpAddr, AuthProbeState>> = OnceLock::new();
+
+fn auth_probe_state_map() -> &'static DashMap<IpAddr, AuthProbeState> {
+    AUTH_PROBE_STATE.get_or_init(DashMap::new)
+}
+
+fn auth_probe_backoff(fail_streak: u32) -> Duration {
+    if fail_streak < AUTH_PROBE_BACKOFF_START_FAILS {
+        return Duration::ZERO;
+    }
+    let shift = (fail_streak - AUTH_PROBE_BACKOFF_START_FAILS).min(10);
+    let multiplier = 1u64.checked_shl(shift).unwrap_or(u64::MAX);
+    let ms = AUTH_PROBE_BACKOFF_BASE_MS
+        .saturating_mul(multiplier)
+        .min(AUTH_PROBE_BACKOFF_MAX_MS);
+    Duration::from_millis(ms)
+}
+
+fn auth_probe_state_expired(state: &AuthProbeState, now: Instant) -> bool {
+    let retention = Duration::from_secs(AUTH_PROBE_TRACK_RETENTION_SECS);
+    now.duration_since(state.last_seen) > retention
+}
+
+fn auth_probe_is_throttled(peer_ip: IpAddr, now: Instant) -> bool {
+    let state = auth_probe_state_map();
+    let Some(entry) = state.get(&peer_ip) else {
+        return false;
+    };
+    if auth_probe_state_expired(&entry, now) {
+        drop(entry);
+        state.remove(&peer_ip);
+        return false;
+    }
+    now < entry.blocked_until
+}
+
+fn auth_probe_record_failure(peer_ip: IpAddr, now: Instant) {
+    let state = auth_probe_state_map();
+    if let Some(mut entry) = state.get_mut(&peer_ip) {
+        if auth_probe_state_expired(&entry, now) {
+            *entry = AuthProbeState {
+                fail_streak: 1,
+                blocked_until: now + auth_probe_backoff(1),
+                last_seen: now,
+            };
+            return;
+        }
+        entry.fail_streak = entry.fail_streak.saturating_add(1);
+        entry.last_seen = now;
+        entry.blocked_until = now + auth_probe_backoff(entry.fail_streak);
+        return;
+    };
+
+    if state.len() >= AUTH_PROBE_TRACK_MAX_ENTRIES {
+        return;
+    }
+
+    state.insert(peer_ip, AuthProbeState {
+        fail_streak: 0,
+        blocked_until: now,
+        last_seen: now,
+    });
+
+    if let Some(mut entry) = state.get_mut(&peer_ip) {
+        entry.fail_streak = 1;
+        entry.blocked_until = now + auth_probe_backoff(1);
+    }
+}
+
+fn auth_probe_record_success(peer_ip: IpAddr) {
+    let state = auth_probe_state_map();
+    state.remove(&peer_ip);
+}
+
+#[cfg(test)]
+fn clear_auth_probe_state_for_testing() {
+    if let Some(state) = AUTH_PROBE_STATE.get() {
+        state.clear();
+    }
+}
+
+#[cfg(test)]
+fn auth_probe_fail_streak_for_testing(peer_ip: IpAddr) -> Option<u32> {
+    let state = AUTH_PROBE_STATE.get()?;
+    state.get(&peer_ip).map(|entry| entry.fail_streak)
+}
+
+#[cfg(test)]
+fn auth_probe_is_throttled_for_testing(peer_ip: IpAddr) -> bool {
+    auth_probe_is_throttled(peer_ip, Instant::now())
+}
+
+#[cfg(test)]
+fn auth_probe_test_lock() -> &'static Mutex<()> {
+    static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    TEST_LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
+fn clear_warned_secrets_for_testing() {
+    if let Some(warned) = INVALID_SECRET_WARNED.get()
+        && let Ok(mut guard) = warned.lock()
+    {
+        guard.clear();
+    }
+}
 
 fn warn_invalid_secret_once(name: &str, reason: &str, expected: usize, got: Option<usize>) {
-    let key = format!("{}:{}", name, reason);
+    let key = (name.to_string(), reason.to_string());
     let warned = INVALID_SECRET_WARNED.get_or_init(|| Mutex::new(HashSet::new()));
     let should_warn = match warned.lock() {
         Ok(mut guard) => guard.insert(key),
@@ -170,6 +300,11 @@ where
 {
     debug!(peer = %peer, handshake_len = handshake.len(), "Processing TLS handshake");
 
+    if auth_probe_is_throttled(peer.ip(), Instant::now()) {
+        debug!(peer = %peer, "TLS handshake rejected by pre-auth probe throttle");
+        return HandshakeResult::BadClient { reader, writer };
+    }
+
     if handshake.len() < tls::TLS_DIGEST_POS + tls::TLS_DIGEST_LEN + 1 {
         debug!(peer = %peer, "TLS handshake too short");
         return HandshakeResult::BadClient { reader, writer };
@@ -177,13 +312,15 @@ where
 
     let secrets = decode_user_secrets(config, None);
 
-    let validation = match tls::validate_tls_handshake(
+    let validation = match tls::validate_tls_handshake_with_replay_window(
         handshake,
         &secrets,
         config.access.ignore_time_skew,
+        config.access.replay_window_secs,
     ) {
         Some(v) => v,
         None => {
+            auth_probe_record_failure(peer.ip(), Instant::now());
             debug!(
                 peer = %peer, 
                 ignore_time_skew = config.access.ignore_time_skew,
@@ -197,6 +334,7 @@ where
     // letting unauthenticated probes evict valid entries from the replay cache.
     let digest_half = &validation.digest[..tls::TLS_DIGEST_HALF_LEN];
     if replay_checker.check_and_add_tls_digest(digest_half) {
+        auth_probe_record_failure(peer.ip(), Instant::now());
         warn!(peer = %peer, "TLS replay attack detected (duplicate digest)");
         return HandshakeResult::BadClient { reader, writer };
     }
@@ -307,6 +445,8 @@ where
         "TLS handshake successful"
     );
 
+    auth_probe_record_success(peer.ip());
+
     HandshakeResult::Success((
         FakeTlsReader::new(reader),
         FakeTlsWriter::new(writer),
@@ -330,6 +470,11 @@ where
     W: AsyncWrite + Unpin + Send,
 {
     trace!(peer = %peer, handshake = ?hex::encode(handshake), "MTProto handshake bytes");
+
+    if auth_probe_is_throttled(peer.ip(), Instant::now()) {
+        debug!(peer = %peer, "MTProto handshake rejected by pre-auth probe throttle");
+        return HandshakeResult::BadClient { reader, writer };
+    }
 
     let dec_prekey_iv = &handshake[SKIP_LEN..SKIP_LEN + PREKEY_LEN + IV_LEN];
 
@@ -396,6 +541,7 @@ where
     // entry from the cache. We accept the cost of performing the full
     // authentication check first to avoid poisoning the replay cache.
         if replay_checker.check_and_add_handshake(dec_prekey_iv) {
+            auth_probe_record_failure(peer.ip(), Instant::now());
             warn!(peer = %peer, user = %user, "MTProto replay attack detected");
             return HandshakeResult::BadClient { reader, writer };
         }
@@ -421,6 +567,8 @@ where
             "MTProto handshake successful"
         );
 
+        auth_probe_record_success(peer.ip());
+
         let max_pending = config.general.crypto_pending_buffer;
         return HandshakeResult::Success((
             CryptoReader::new(reader, decryptor),
@@ -429,6 +577,7 @@ where
         ));
     }
 
+    auth_probe_record_failure(peer.ip(), Instant::now());
     debug!(peer = %peer, "MTProto handshake: no matching user found");
     HandshakeResult::BadClient { reader, writer }
 }
@@ -437,8 +586,6 @@ where
 pub fn generate_tg_nonce(
     proto_tag: ProtoTag, 
     dc_idx: i16,
-    _client_dec_key: &[u8; 32],
-    _client_dec_iv: u128,
     client_enc_key: &[u8; 32],
     client_enc_iv: u128,
     rng: &SecureRandom,

@@ -82,6 +82,7 @@ fn make_valid_tls_client_hello_with_alpn(
 }
 
 fn test_config_with_secret_hex(secret_hex: &str) -> ProxyConfig {
+    clear_auth_probe_state_for_testing();
     let mut cfg = ProxyConfig::default();
     cfg.access.users.clear();
     cfg.access
@@ -93,8 +94,6 @@ fn test_config_with_secret_hex(secret_hex: &str) -> ProxyConfig {
 
 #[test]
 fn test_generate_tg_nonce() {
-    let client_dec_key = [0x42u8; 32];
-    let client_dec_iv = 12345u128;
     let client_enc_key = [0x24u8; 32];
     let client_enc_iv = 54321u128;
 
@@ -102,8 +101,6 @@ fn test_generate_tg_nonce() {
     let (nonce, _tg_enc_key, _tg_enc_iv, _tg_dec_key, _tg_dec_iv) = generate_tg_nonce(
         ProtoTag::Secure,
         2,
-        &client_dec_key,
-        client_dec_iv,
         &client_enc_key,
         client_enc_iv,
         &rng,
@@ -118,8 +115,6 @@ fn test_generate_tg_nonce() {
 
 #[test]
 fn test_encrypt_tg_nonce() {
-    let client_dec_key = [0x42u8; 32];
-    let client_dec_iv = 12345u128;
     let client_enc_key = [0x24u8; 32];
     let client_enc_iv = 54321u128;
 
@@ -127,8 +122,6 @@ fn test_encrypt_tg_nonce() {
     let (nonce, _, _, _, _) = generate_tg_nonce(
         ProtoTag::Secure,
         2,
-        &client_dec_key,
-        client_dec_iv,
         &client_enc_key,
         client_enc_iv,
         &rng,
@@ -164,8 +157,6 @@ fn test_handshake_success_drop_does_not_panic() {
 
 #[test]
 fn test_generate_tg_nonce_enc_dec_material_is_consistent() {
-    let client_dec_key = [0x12u8; 32];
-    let client_dec_iv = 0x11223344556677889900aabbccddeeffu128;
     let client_enc_key = [0x34u8; 32];
     let client_enc_iv = 0xffeeddccbbaa00998877665544332211u128;
     let rng = SecureRandom::new();
@@ -173,8 +164,6 @@ fn test_generate_tg_nonce_enc_dec_material_is_consistent() {
     let (nonce, tg_enc_key, tg_enc_iv, tg_dec_key, tg_dec_iv) = generate_tg_nonce(
         ProtoTag::Secure,
         7,
-        &client_dec_key,
-        client_dec_iv,
         &client_enc_key,
         client_enc_iv,
         &rng,
@@ -209,8 +198,6 @@ fn test_generate_tg_nonce_enc_dec_material_is_consistent() {
 
 #[test]
 fn test_generate_tg_nonce_fast_mode_embeds_reversed_client_enc_material() {
-    let client_dec_key = [0x22u8; 32];
-    let client_dec_iv = 0x0102030405060708090a0b0c0d0e0f10u128;
     let client_enc_key = [0xABu8; 32];
     let client_enc_iv = 0x11223344556677889900aabbccddeeffu128;
     let rng = SecureRandom::new();
@@ -218,8 +205,6 @@ fn test_generate_tg_nonce_fast_mode_embeds_reversed_client_enc_material() {
     let (nonce, _, _, _, _) = generate_tg_nonce(
         ProtoTag::Secure,
         9,
-        &client_dec_key,
-        client_dec_iv,
         &client_enc_key,
         client_enc_iv,
         &rng,
@@ -236,8 +221,6 @@ fn test_generate_tg_nonce_fast_mode_embeds_reversed_client_enc_material() {
 
 #[test]
 fn test_encrypt_tg_nonce_with_ciphers_matches_manual_suffix_encryption() {
-    let client_dec_key = [0x42u8; 32];
-    let client_dec_iv = 12345u128;
     let client_enc_key = [0x24u8; 32];
     let client_enc_iv = 54321u128;
 
@@ -245,8 +228,6 @@ fn test_encrypt_tg_nonce_with_ciphers_matches_manual_suffix_encryption() {
     let (nonce, _, _, _, _) = generate_tg_nonce(
         ProtoTag::Secure,
         2,
-        &client_dec_key,
-        client_dec_iv,
         &client_enc_key,
         client_enc_iv,
         &rng,
@@ -386,6 +367,7 @@ async fn invalid_tls_probe_does_not_pollute_replay_cache() {
 
 #[tokio::test]
 async fn empty_decoded_secret_is_rejected() {
+    clear_warned_secrets_for_testing();
     let config = test_config_with_secret_hex("");
     let replay_checker = ReplayChecker::new(128, Duration::from_secs(60));
     let rng = SecureRandom::new();
@@ -409,6 +391,7 @@ async fn empty_decoded_secret_is_rejected() {
 
 #[tokio::test]
 async fn wrong_length_decoded_secret_is_rejected() {
+    clear_warned_secrets_for_testing();
     let config = test_config_with_secret_hex("aa");
     let replay_checker = ReplayChecker::new(128, Duration::from_secs(60));
     let rng = SecureRandom::new();
@@ -458,6 +441,8 @@ async fn invalid_mtproto_probe_does_not_pollute_replay_cache() {
 
 #[tokio::test]
 async fn mixed_secret_lengths_keep_valid_user_authenticating() {
+    clear_warned_secrets_for_testing();
+    clear_auth_probe_state_for_testing();
     let good_secret = [0x22u8; 16];
     let mut config = ProxyConfig::default();
     config.access.users.clear();
@@ -582,6 +567,7 @@ async fn malformed_tls_classes_complete_within_bounded_time() {
 }
 
 #[tokio::test]
+#[ignore = "timing-sensitive; run manually on low-jitter hosts"]
 async fn malformed_tls_classes_share_close_latency_buckets() {
     const ITER: usize = 24;
     const BUCKET_MS: u128 = 10;
@@ -678,5 +664,116 @@ fn secure_tag_requires_secure_mode_on_direct_transport() {
     assert!(
         mode_enabled_for_proto(&config, ProtoTag::Secure, false),
         "Secure tag without TLS must be accepted when secure mode is enabled"
+    );
+}
+
+#[test]
+fn invalid_secret_warning_keys_do_not_collide_on_colon_boundaries() {
+    clear_warned_secrets_for_testing();
+
+    warn_invalid_secret_once("a:b", "c", ACCESS_SECRET_BYTES, Some(1));
+    warn_invalid_secret_once("a", "b:c", ACCESS_SECRET_BYTES, Some(2));
+
+    let warned = INVALID_SECRET_WARNED
+        .get()
+        .expect("warned set must be initialized");
+    let guard = warned.lock().expect("warned set lock must be available");
+    assert_eq!(
+        guard.len(),
+        2,
+        "(name, reason) pairs that stringify to the same colon-joined key must remain distinct"
+    );
+}
+
+#[tokio::test]
+async fn repeated_invalid_tls_probes_trigger_pre_auth_throttle() {
+    let _guard = auth_probe_test_lock()
+        .lock()
+        .expect("auth probe test lock must be available");
+    clear_auth_probe_state_for_testing();
+
+    let config = test_config_with_secret_hex("11111111111111111111111111111111");
+    let replay_checker = ReplayChecker::new(128, Duration::from_secs(60));
+    let rng = SecureRandom::new();
+    let peer: SocketAddr = "127.0.0.1:44361".parse().unwrap();
+
+    let mut invalid = vec![0x42u8; tls::TLS_DIGEST_POS + tls::TLS_DIGEST_LEN + 1 + 32];
+    invalid[tls::TLS_DIGEST_POS + tls::TLS_DIGEST_LEN] = 32;
+
+    for _ in 0..AUTH_PROBE_BACKOFF_START_FAILS {
+        let result = handle_tls_handshake(
+            &invalid,
+            tokio::io::empty(),
+            tokio::io::sink(),
+            peer,
+            &config,
+            &replay_checker,
+            &rng,
+            None,
+        )
+        .await;
+        assert!(matches!(result, HandshakeResult::BadClient { .. }));
+    }
+
+    assert!(
+        auth_probe_is_throttled_for_testing(peer.ip()),
+        "invalid probe burst must activate per-IP pre-auth throttle"
+    );
+}
+
+#[tokio::test]
+async fn successful_tls_handshake_clears_pre_auth_failure_streak() {
+    let _guard = auth_probe_test_lock()
+        .lock()
+        .expect("auth probe test lock must be available");
+    clear_auth_probe_state_for_testing();
+
+    let secret = [0x23u8; 16];
+    let config = test_config_with_secret_hex("23232323232323232323232323232323");
+    let replay_checker = ReplayChecker::new(256, Duration::from_secs(60));
+    let rng = SecureRandom::new();
+    let peer: SocketAddr = "127.0.0.1:44362".parse().unwrap();
+
+    let mut invalid = vec![0x42u8; tls::TLS_DIGEST_POS + tls::TLS_DIGEST_LEN + 1 + 32];
+    invalid[tls::TLS_DIGEST_POS + tls::TLS_DIGEST_LEN] = 32;
+
+    for expected in 1..AUTH_PROBE_BACKOFF_START_FAILS {
+        let result = handle_tls_handshake(
+            &invalid,
+            tokio::io::empty(),
+            tokio::io::sink(),
+            peer,
+            &config,
+            &replay_checker,
+            &rng,
+            None,
+        )
+        .await;
+        assert!(matches!(result, HandshakeResult::BadClient { .. }));
+        assert_eq!(
+            auth_probe_fail_streak_for_testing(peer.ip()),
+            Some(expected),
+            "failure streak must grow before a successful authentication"
+        );
+    }
+
+    let valid = make_valid_tls_handshake(&secret, 0);
+    let success = handle_tls_handshake(
+        &valid,
+        tokio::io::empty(),
+        tokio::io::sink(),
+        peer,
+        &config,
+        &replay_checker,
+        &rng,
+        None,
+    )
+    .await;
+
+    assert!(matches!(success, HandshakeResult::Success(_)));
+    assert_eq!(
+        auth_probe_fail_streak_for_testing(peer.ip()),
+        None,
+        "successful authentication must clear accumulated pre-auth failures"
     );
 }

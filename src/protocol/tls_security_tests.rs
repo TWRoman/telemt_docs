@@ -654,6 +654,34 @@ fn timestamp_at_boot_threshold_triggers_skew_check() {
     );
 }
 
+#[test]
+fn replay_window_cap_disables_boot_bypass_for_old_timestamps() {
+    let secret = b"boot_cap_disabled_test";
+    let ts: u32 = 900;
+    let h = make_valid_tls_handshake(secret, ts);
+    let secrets = vec![("u".to_string(), secret.to_vec())];
+
+    let result = validate_tls_handshake_with_replay_window(&h, &secrets, false, 300);
+    assert!(
+        result.is_none(),
+        "timestamp above replay-window cap must not use boot-time bypass"
+    );
+}
+
+#[test]
+fn replay_window_cap_still_allows_small_boot_timestamp() {
+    let secret = b"boot_cap_enabled_test";
+    let ts: u32 = 120;
+    let h = make_valid_tls_handshake(secret, ts);
+    let secrets = vec![("u".to_string(), secret.to_vec())];
+
+    let result = validate_tls_handshake_with_replay_window(&h, &secrets, false, 300);
+    assert!(
+        result.is_some(),
+        "timestamp below replay-window cap must retain boot-time compatibility"
+    );
+}
+
 // ------------------------------------------------------------------
 // Extreme timestamp values
 // ------------------------------------------------------------------
