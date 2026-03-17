@@ -37,7 +37,6 @@ use crate::config::{
 };
 use super::load::{LoadedConfig, ProxyConfig};
 
-const HOT_RELOAD_STABLE_SNAPSHOTS: u8 = 2;
 const HOT_RELOAD_DEBOUNCE: Duration = Duration::from_millis(50);
 
 // ── Hot fields ────────────────────────────────────────────────────────────────
@@ -329,41 +328,19 @@ impl WatchManifest {
 #[derive(Debug, Default)]
 struct ReloadState {
     applied_snapshot_hash: Option<u64>,
-    candidate_snapshot_hash: Option<u64>,
-    candidate_hits: u8,
 }
 
 impl ReloadState {
     fn new(applied_snapshot_hash: Option<u64>) -> Self {
-        Self {
-            applied_snapshot_hash,
-            candidate_snapshot_hash: None,
-            candidate_hits: 0,
-        }
+        Self { applied_snapshot_hash }
     }
 
     fn is_applied(&self, hash: u64) -> bool {
         self.applied_snapshot_hash == Some(hash)
     }
 
-    fn observe_candidate(&mut self, hash: u64) -> u8 {
-        if self.candidate_snapshot_hash == Some(hash) {
-            self.candidate_hits = self.candidate_hits.saturating_add(1);
-        } else {
-            self.candidate_snapshot_hash = Some(hash);
-            self.candidate_hits = 1;
-        }
-        self.candidate_hits
-    }
-
-    fn reset_candidate(&mut self) {
-        self.candidate_snapshot_hash = None;
-        self.candidate_hits = 0;
-    }
-
     fn mark_applied(&mut self, hash: u64) {
         self.applied_snapshot_hash = Some(hash);
-        self.reset_candidate();
     }
 }
 
@@ -1138,7 +1115,6 @@ fn reload_config(
     let loaded = match ProxyConfig::load_with_metadata(config_path) {
         Ok(loaded) => loaded,
         Err(e) => {
-            reload_state.reset_candidate();
             error!("config reload: failed to parse {:?}: {}", config_path, e);
             return None;
         }
@@ -1151,23 +1127,11 @@ fn reload_config(
     let next_manifest = WatchManifest::from_source_files(&source_files);
 
     if let Err(e) = new_cfg.validate() {
-        reload_state.reset_candidate();
         error!("config reload: validation failed: {}; keeping old config", e);
         return Some(next_manifest);
     }
 
     if reload_state.is_applied(rendered_hash) {
-        return Some(next_manifest);
-    }
-
-    let candidate_hits = reload_state.observe_candidate(rendered_hash);
-    if candidate_hits < HOT_RELOAD_STABLE_SNAPSHOTS {
-        info!(
-            snapshot_hash = rendered_hash,
-            candidate_hits,
-            required_hits = HOT_RELOAD_STABLE_SNAPSHOTS,
-            "config reload: candidate snapshot observed but not stable yet"
-        );
         return Some(next_manifest);
     }
 
@@ -1190,7 +1154,6 @@ fn reload_config(
     if old_hot.dns_overrides != applied_hot.dns_overrides
         && let Err(e) = crate::network::dns_overrides::install_entries(&applied_hot.dns_overrides)
     {
-        reload_state.reset_candidate();
         error!(
             "config reload: invalid network.dns_overrides: {}; keeping old config",
             e
@@ -1334,14 +1297,28 @@ pub fn spawn_config_watcher(
             tokio::time::sleep(HOT_RELOAD_DEBOUNCE).await;
             while notify_rx.try_recv().is_ok() {}
 
-            if let Some(next_manifest) = reload_config(
+            let mut next_manifest = reload_config(
                 &config_path,
                 &config_tx,
                 &log_tx,
                 detected_ip_v4,
                 detected_ip_v6,
                 &mut reload_state,
-            ) {
+            );
+            if next_manifest.is_none() {
+                tokio::time::sleep(HOT_RELOAD_DEBOUNCE).await;
+                while notify_rx.try_recv().is_ok() {}
+                next_manifest = reload_config(
+                    &config_path,
+                    &config_tx,
+                    &log_tx,
+                    detected_ip_v4,
+                    detected_ip_v6,
+                    &mut reload_state,
+                );
+            }
+
+            if let Some(next_manifest) = next_manifest {
                 apply_watch_manifest(
                     inotify_watcher.as_mut(),
                     poll_watcher.as_mut(),
@@ -1466,7 +1443,7 @@ mod tests {
     }
 
     #[test]
-    fn reload_requires_stable_snapshot_before_hot_apply() {
+    fn reload_applies_hot_change_on_first_observed_snapshot() {
         let initial_tag = "11111111111111111111111111111111";
         let final_tag = "22222222222222222222222222222222";
         let path = temp_config_path("telemt_hot_reload_stable");
@@ -1478,20 +1455,7 @@ mod tests {
         let (log_tx, _log_rx) = watch::channel(initial_cfg.general.log_level.clone());
         let mut reload_state = ReloadState::new(Some(initial_hash));
 
-        write_reload_config(&path, None, None);
-        reload_config(&path, &config_tx, &log_tx, None, None, &mut reload_state).unwrap();
-        assert_eq!(
-            config_tx.borrow().general.ad_tag.as_deref(),
-            Some(initial_tag)
-        );
-
         write_reload_config(&path, Some(final_tag), None);
-        reload_config(&path, &config_tx, &log_tx, None, None, &mut reload_state).unwrap();
-        assert_eq!(
-            config_tx.borrow().general.ad_tag.as_deref(),
-            Some(initial_tag)
-        );
-
         reload_config(&path, &config_tx, &log_tx, None, None, &mut reload_state).unwrap();
         assert_eq!(config_tx.borrow().general.ad_tag.as_deref(), Some(final_tag));
 
@@ -1513,11 +1477,37 @@ mod tests {
 
         write_reload_config(&path, Some(final_tag), Some(initial_cfg.server.port + 1));
         reload_config(&path, &config_tx, &log_tx, None, None, &mut reload_state).unwrap();
-        reload_config(&path, &config_tx, &log_tx, None, None, &mut reload_state).unwrap();
 
         let applied = config_tx.borrow().clone();
         assert_eq!(applied.general.ad_tag.as_deref(), Some(final_tag));
         assert_eq!(applied.server.port, initial_cfg.server.port);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn reload_recovers_after_parse_error_on_next_attempt() {
+        let initial_tag = "cccccccccccccccccccccccccccccccc";
+        let final_tag = "dddddddddddddddddddddddddddddddd";
+        let path = temp_config_path("telemt_hot_reload_parse_recovery");
+
+        write_reload_config(&path, Some(initial_tag), None);
+        let initial_cfg = Arc::new(ProxyConfig::load(&path).unwrap());
+        let initial_hash = ProxyConfig::load_with_metadata(&path).unwrap().rendered_hash;
+        let (config_tx, _config_rx) = watch::channel(initial_cfg.clone());
+        let (log_tx, _log_rx) = watch::channel(initial_cfg.general.log_level.clone());
+        let mut reload_state = ReloadState::new(Some(initial_hash));
+
+        std::fs::write(&path, "[access.users\nuser = \"broken\"\n").unwrap();
+        assert!(reload_config(&path, &config_tx, &log_tx, None, None, &mut reload_state).is_none());
+        assert_eq!(
+            config_tx.borrow().general.ad_tag.as_deref(),
+            Some(initial_tag)
+        );
+
+        write_reload_config(&path, Some(final_tag), None);
+        reload_config(&path, &config_tx, &log_tx, None, None, &mut reload_state).unwrap();
+        assert_eq!(config_tx.borrow().general.ad_tag.as_deref(), Some(final_tag));
 
         let _ = std::fs::remove_file(path);
     }
