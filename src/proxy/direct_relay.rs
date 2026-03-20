@@ -3,8 +3,7 @@ use std::io::Write;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
-use tokio::net::TcpStream;
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf, split};
 use tokio::sync::watch;
 use tracing::{debug, info, warn};
 
@@ -15,7 +14,7 @@ use crate::protocol::constants::*;
 use crate::proxy::handshake::{HandshakeSuccess, encrypt_tg_nonce_with_ciphers, generate_tg_nonce};
 use crate::proxy::relay::relay_bidirectional;
 use crate::proxy::route_mode::{
-    RelayRouteMode, RouteCutoverState, ROUTE_SWITCH_ERROR_MSG, affected_cutover_state,
+    ROUTE_SWITCH_ERROR_MSG, RelayRouteMode, RouteCutoverState, affected_cutover_state,
     cutover_stagger_delay,
 };
 use crate::proxy::adaptive_buffers;
@@ -56,7 +55,11 @@ where
     );
 
     let tg_stream = upstream_manager
-        .connect(dc_addr, Some(success.dc_idx), user.strip_prefix("scope_").filter(|s| !s.is_empty()))
+        .connect(
+            dc_addr,
+            Some(success.dc_idx),
+            user.strip_prefix("scope_").filter(|s| !s.is_empty()),
+        )
         .await?;
 
     debug!(peer = %success.peer, dc_addr = %dc_addr, "Connected, performing TG handshake");
@@ -93,11 +96,9 @@ where
     );
     tokio::pin!(relay_result);
     let relay_result = loop {
-        if let Some(cutover) = affected_cutover_state(
-            &route_rx,
-            RelayRouteMode::Direct,
-            route_snapshot.generation,
-        ) {
+        if let Some(cutover) =
+            affected_cutover_state(&route_rx, RelayRouteMode::Direct, route_snapshot.generation)
+        {
             let delay = cutover_stagger_delay(session_id, cutover.generation);
             warn!(
                 user = %user,
@@ -148,7 +149,9 @@ fn get_dc_addr_static(dc_idx: i16, config: &ProxyConfig) -> Result<SocketAddr> {
         for addr_str in addrs {
             match addr_str.parse::<SocketAddr>() {
                 Ok(addr) => parsed.push(addr),
-                Err(_) => warn!(dc_idx = dc_idx, addr_str = %addr_str, "Invalid DC override address in config, ignoring"),
+                Err(_) => {
+                    warn!(dc_idx = dc_idx, addr_str = %addr_str, "Invalid DC override address in config, ignoring")
+                }
             }
         }
 
@@ -170,7 +173,10 @@ fn get_dc_addr_static(dc_idx: i16, config: &ProxyConfig) -> Result<SocketAddr> {
 
     // Unknown DC requested by client without override: log and fall back.
     if !config.dc_overrides.contains_key(&dc_key) {
-        warn!(dc_idx = dc_idx, "Requested non-standard DC with no override; falling back to default cluster");
+        warn!(
+            dc_idx = dc_idx,
+            "Requested non-standard DC with no override; falling back to default cluster"
+        );
         if config.general.unknown_dc_file_log_enabled
             && let Some(path) = &config.general.unknown_dc_log_path
             && let Ok(handle) = tokio::runtime::Handle::try_current()
@@ -204,15 +210,15 @@ fn get_dc_addr_static(dc_idx: i16, config: &ProxyConfig) -> Result<SocketAddr> {
     ))
 }
 
-async fn do_tg_handshake_static(
-    mut stream: TcpStream,
+async fn do_tg_handshake_static<S>(
+    mut stream: S,
     success: &HandshakeSuccess,
     config: &ProxyConfig,
     rng: &SecureRandom,
-) -> Result<(
-    CryptoReader<tokio::net::tcp::OwnedReadHalf>,
-    CryptoWriter<tokio::net::tcp::OwnedWriteHalf>,
-)> {
+) -> Result<(CryptoReader<ReadHalf<S>>, CryptoWriter<WriteHalf<S>>)>
+where
+    S: AsyncRead + AsyncWrite + Unpin,
+{
     let (nonce, _tg_enc_key, _tg_enc_iv, _tg_dec_key, _tg_dec_iv) = generate_tg_nonce(
         success.proto_tag,
         success.dc_idx,
@@ -235,7 +241,7 @@ async fn do_tg_handshake_static(
     stream.write_all(&encrypted_nonce).await?;
     stream.flush().await?;
 
-    let (read_half, write_half) = stream.into_split();
+    let (read_half, write_half) = split(stream);
 
     let max_pending = config.general.crypto_pending_buffer;
     Ok((

@@ -6,8 +6,9 @@ use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use rand::Rng;
+use serde::{Deserialize, Serialize};
+use shadowsocks::config::ServerConfig as ShadowsocksServerConfig;
 use tracing::warn;
-use serde::{Serialize, Deserialize};
 
 use crate::error::{ProxyError, Result};
 
@@ -122,11 +123,35 @@ fn sanitize_ad_tag(ad_tag: &mut Option<String>) {
     };
 
     if !is_valid_ad_tag(tag) {
-        warn!(
-            "Invalid general.ad_tag value, expected exactly 32 hex chars; ad_tag is disabled"
-        );
+        warn!("Invalid general.ad_tag value, expected exactly 32 hex chars; ad_tag is disabled");
         *ad_tag = None;
     }
+}
+
+fn validate_upstreams(config: &ProxyConfig) -> Result<()> {
+    let has_enabled_shadowsocks = config.upstreams.iter().any(|upstream| {
+        upstream.enabled && matches!(upstream.upstream_type, UpstreamType::Shadowsocks { .. })
+    });
+
+    if has_enabled_shadowsocks && config.general.use_middle_proxy {
+        return Err(ProxyError::Config(
+            "shadowsocks upstreams require general.use_middle_proxy = false".to_string(),
+        ));
+    }
+
+    for upstream in &config.upstreams {
+        if let UpstreamType::Shadowsocks { url, .. } = &upstream.upstream_type {
+            let parsed = ShadowsocksServerConfig::from_url(url)
+                .map_err(|error| ProxyError::Config(format!("invalid shadowsocks url: {error}")))?;
+            if parsed.plugin().is_some() {
+                return Err(ProxyError::Config(
+                    "shadowsocks plugins are not supported".to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 // ============= Main Config =============
@@ -180,7 +205,8 @@ impl ProxyConfig {
 
     pub(crate) fn load_with_metadata<P: AsRef<Path>>(path: P) -> Result<LoadedConfig> {
         let path = path.as_ref();
-        let content = std::fs::read_to_string(path).map_err(|e| ProxyError::Config(e.to_string()))?;
+        let content =
+            std::fs::read_to_string(path).map_err(|e| ProxyError::Config(e.to_string()))?;
         let base_dir = path.parent().unwrap_or(Path::new("."));
         let mut source_files = BTreeSet::new();
         source_files.insert(normalize_config_path(path));
@@ -207,15 +233,17 @@ impl ProxyConfig {
             .map(|table| table.contains_key("stun_servers"))
             .unwrap_or(false);
 
-        let mut config: ProxyConfig =
-            parsed_toml.try_into().map_err(|e| ProxyError::Config(e.to_string()))?;
+        let mut config: ProxyConfig = parsed_toml
+            .try_into()
+            .map_err(|e| ProxyError::Config(e.to_string()))?;
 
         if !update_every_is_explicit && (legacy_secret_is_explicit || legacy_config_is_explicit) {
             config.general.update_every = None;
         }
 
         let legacy_nat_stun = config.general.middle_proxy_nat_stun.take();
-        let legacy_nat_stun_servers = std::mem::take(&mut config.general.middle_proxy_nat_stun_servers);
+        let legacy_nat_stun_servers =
+            std::mem::take(&mut config.general.middle_proxy_nat_stun_servers);
         let legacy_nat_stun_used = legacy_nat_stun.is_some() || !legacy_nat_stun_servers.is_empty();
         if stun_servers_is_explicit {
             let mut explicit_stun_servers = Vec::new();
@@ -225,7 +253,9 @@ impl ProxyConfig {
             config.network.stun_servers = explicit_stun_servers;
 
             if legacy_nat_stun_used {
-                warn!("general.middle_proxy_nat_stun and general.middle_proxy_nat_stun_servers are ignored because network.stun_servers is explicitly set");
+                warn!(
+                    "general.middle_proxy_nat_stun and general.middle_proxy_nat_stun_servers are ignored because network.stun_servers is explicitly set"
+                );
             }
         } else {
             // Keep the default STUN pool unless network.stun_servers is explicitly overridden.
@@ -240,7 +270,9 @@ impl ProxyConfig {
             config.network.stun_servers = unified_stun_servers;
 
             if legacy_nat_stun_used {
-                warn!("general.middle_proxy_nat_stun and general.middle_proxy_nat_stun_servers are deprecated; use network.stun_servers");
+                warn!(
+                    "general.middle_proxy_nat_stun and general.middle_proxy_nat_stun_servers are deprecated; use network.stun_servers"
+                );
             }
         }
 
@@ -378,13 +410,15 @@ impl ProxyConfig {
 
         if !(4096..=1024 * 1024).contains(&config.general.direct_relay_copy_buf_c2s_bytes) {
             return Err(ProxyError::Config(
-                "general.direct_relay_copy_buf_c2s_bytes must be within [4096, 1048576]".to_string(),
+                "general.direct_relay_copy_buf_c2s_bytes must be within [4096, 1048576]"
+                    .to_string(),
             ));
         }
 
         if !(8192..=2 * 1024 * 1024).contains(&config.general.direct_relay_copy_buf_s2c_bytes) {
             return Err(ProxyError::Config(
-                "general.direct_relay_copy_buf_s2c_bytes must be within [8192, 2097152]".to_string(),
+                "general.direct_relay_copy_buf_s2c_bytes must be within [8192, 2097152]"
+                    .to_string(),
             ));
         }
 
@@ -633,7 +667,8 @@ impl ProxyConfig {
 
         if !(1..=100).contains(&config.general.me_route_backpressure_high_watermark_pct) {
             return Err(ProxyError::Config(
-                "general.me_route_backpressure_high_watermark_pct must be within [1, 100]".to_string(),
+                "general.me_route_backpressure_high_watermark_pct must be within [1, 100]"
+                    .to_string(),
             ));
         }
 
@@ -816,11 +851,15 @@ impl ProxyConfig {
         crate::network::dns_overrides::validate_entries(&config.network.dns_overrides)?;
 
         if config.general.use_middle_proxy && config.network.ipv6 == Some(true) {
-            warn!("IPv6 with Middle Proxy is experimental and may cause KDF address mismatch; consider disabling IPv6 or ME");
+            warn!(
+                "IPv6 with Middle Proxy is experimental and may cause KDF address mismatch; consider disabling IPv6 or ME"
+            );
         }
 
         // Random fake_cert_len only when default is in use.
-        if !config.censorship.tls_emulation && config.censorship.fake_cert_len == default_fake_cert_len() {
+        if !config.censorship.tls_emulation
+            && config.censorship.fake_cert_len == default_fake_cert_len()
+        {
             config.censorship.fake_cert_len = rand::rng().gen_range(1024..4096);
         }
 
@@ -830,8 +869,7 @@ impl ProxyConfig {
         let listen_tcp = config.server.listen_tcp.unwrap_or_else(|| {
             if config.server.listen_unix_sock.is_some() {
                 // Unix socket present: TCP only if user explicitly set addresses or listeners.
-                config.server.listen_addr_ipv4.is_some()
-                    || !config.server.listeners.is_empty()
+                config.server.listen_addr_ipv4.is_some() || !config.server.listeners.is_empty()
             } else {
                 true
             }
@@ -839,7 +877,9 @@ impl ProxyConfig {
 
         // Migration: Populate listeners if empty (skip when listen_tcp = false).
         if config.server.listeners.is_empty() && listen_tcp {
-            let ipv4_str = config.server.listen_addr_ipv4
+            let ipv4_str = config
+                .server
+                .listen_addr_ipv4
                 .as_deref()
                 .unwrap_or("0.0.0.0");
             if let Ok(ipv4) = ipv4_str.parse::<IpAddr>() {
@@ -881,7 +921,10 @@ impl ProxyConfig {
         // Migration: Populate upstreams if empty (Default Direct).
         if config.upstreams.is_empty() {
             config.upstreams.push(UpstreamConfig {
-                upstream_type: UpstreamType::Direct { interface: None, bind_addresses: None },
+                upstream_type: UpstreamType::Direct {
+                    interface: None,
+                    bind_addresses: None,
+                },
                 weight: 1,
                 enabled: true,
                 scopes: String::new(),
@@ -894,6 +937,8 @@ impl ProxyConfig {
             .dc_overrides
             .entry("203".to_string())
             .or_insert_with(|| vec!["91.105.192.100:443".to_string()]);
+
+        validate_upstreams(&config)?;
 
         Ok(LoadedConfig {
             config,
@@ -941,6 +986,9 @@ impl ProxyConfig {
 mod tests {
     use super::*;
 
+    const TEST_SHADOWSOCKS_URL: &str =
+        "ss://2022-blake3-aes-256-gcm:MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTIzNDU2Nzg5MDE=@127.0.0.1:8388";
+
     #[test]
     fn serde_defaults_remain_unchanged_for_present_sections() {
         let toml = r#"
@@ -970,10 +1018,7 @@ mod tests {
             cfg.general.me_init_retry_attempts,
             default_me_init_retry_attempts()
         );
-        assert_eq!(
-            cfg.general.me2dc_fallback,
-            default_me2dc_fallback()
-        );
+        assert_eq!(cfg.general.me2dc_fallback, default_me2dc_fallback());
         assert_eq!(
             cfg.general.proxy_config_v4_cache_path,
             default_proxy_config_v4_cache_path()
@@ -1282,11 +1327,12 @@ mod tests {
         let path = dir.join("telemt_dc_override_test.toml");
         std::fs::write(&path, toml).unwrap();
         let cfg = ProxyConfig::load(&path).unwrap();
-        assert!(cfg
-            .dc_overrides
-            .get("203")
-            .map(|v| v.contains(&"91.105.192.100:443".to_string()))
-            .unwrap_or(false));
+        assert!(
+            cfg.dc_overrides
+                .get("203")
+                .map(|v| v.contains(&"91.105.192.100:443".to_string()))
+                .unwrap_or(false)
+        );
         let _ = std::fs::remove_file(path);
     }
 
@@ -1473,11 +1519,9 @@ mod tests {
         let path = dir.join("telemt_me_adaptive_floor_min_writers_out_of_range_test.toml");
         std::fs::write(&path, toml).unwrap();
         let err = ProxyConfig::load(&path).unwrap_err().to_string();
-        assert!(
-            err.contains(
-                "general.me_adaptive_floor_min_writers_single_endpoint must be within [1, 32]"
-            )
-        );
+        assert!(err.contains(
+            "general.me_adaptive_floor_min_writers_single_endpoint must be within [1, 32]"
+        ));
         let _ = std::fs::remove_file(path);
     }
 
@@ -2193,6 +2237,124 @@ mod tests {
             cfg.general.ad_tag.as_deref(),
             Some("00112233445566778899aabbccddeeff")
         );
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn shadowsocks_upstream_url_loads_successfully() {
+        let toml = format!(
+            r#"
+            [general]
+            use_middle_proxy = false
+
+            [censorship]
+            tls_domain = "example.com"
+
+            [access.users]
+            user = "00000000000000000000000000000000"
+
+            [[upstreams]]
+            type = "shadowsocks"
+            url = "{url}"
+            interface = "127.0.0.2"
+            "#,
+            url = TEST_SHADOWSOCKS_URL,
+        );
+        let dir = std::env::temp_dir();
+        let path = dir.join("telemt_shadowsocks_valid_test.toml");
+        std::fs::write(&path, toml).unwrap();
+        let cfg = ProxyConfig::load(&path).unwrap();
+
+        assert!(matches!(
+            &cfg.upstreams[0].upstream_type,
+            UpstreamType::Shadowsocks { url, interface }
+                if url == TEST_SHADOWSOCKS_URL && interface.as_deref() == Some("127.0.0.2")
+        ));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn shadowsocks_requires_direct_mode() {
+        let toml = format!(
+            r#"
+            [general]
+            use_middle_proxy = true
+
+            [censorship]
+            tls_domain = "example.com"
+
+            [access.users]
+            user = "00000000000000000000000000000000"
+
+            [[upstreams]]
+            type = "shadowsocks"
+            url = "{url}"
+            "#,
+            url = TEST_SHADOWSOCKS_URL,
+        );
+        let dir = std::env::temp_dir();
+        let path = dir.join("telemt_shadowsocks_me_reject_test.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = ProxyConfig::load(&path).unwrap_err().to_string();
+
+        assert!(err.contains("shadowsocks upstreams require general.use_middle_proxy = false"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn invalid_shadowsocks_url_is_rejected() {
+        let toml = r#"
+            [general]
+            use_middle_proxy = false
+
+            [censorship]
+            tls_domain = "example.com"
+
+            [access.users]
+            user = "00000000000000000000000000000000"
+
+            [[upstreams]]
+            type = "shadowsocks"
+            url = "not-a-valid-ss-url"
+        "#;
+        let dir = std::env::temp_dir();
+        let path = dir.join("telemt_shadowsocks_invalid_url_test.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = ProxyConfig::load(&path).unwrap_err().to_string();
+
+        assert!(err.contains("invalid shadowsocks url"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn shadowsocks_plugins_are_rejected() {
+        let toml = format!(
+            r#"
+            [general]
+            use_middle_proxy = false
+
+            [censorship]
+            tls_domain = "example.com"
+
+            [access.users]
+            user = "00000000000000000000000000000000"
+
+            [[upstreams]]
+            type = "shadowsocks"
+            url = "{url}?plugin=obfs-local%3Bobfs%3Dhttp"
+            "#,
+            url = TEST_SHADOWSOCKS_URL,
+        );
+        let dir = std::env::temp_dir();
+        let path = dir.join("telemt_shadowsocks_plugin_reject_test.toml");
+        std::fs::write(&path, toml).unwrap();
+        let err = ProxyConfig::load(&path).unwrap_err().to_string();
+
+        assert!(err.contains("shadowsocks plugins are not supported"));
+
         let _ = std::fs::remove_file(path);
     }
 

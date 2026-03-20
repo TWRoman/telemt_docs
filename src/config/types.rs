@@ -955,24 +955,38 @@ impl Default for GeneralConfig {
             me_reconnect_backoff_cap_ms: default_reconnect_backoff_cap_ms(),
             me_reconnect_fast_retry_count: default_me_reconnect_fast_retry_count(),
             me_single_endpoint_shadow_writers: default_me_single_endpoint_shadow_writers(),
-            me_single_endpoint_outage_mode_enabled: default_me_single_endpoint_outage_mode_enabled(),
-            me_single_endpoint_outage_disable_quarantine: default_me_single_endpoint_outage_disable_quarantine(),
-            me_single_endpoint_outage_backoff_min_ms: default_me_single_endpoint_outage_backoff_min_ms(),
-            me_single_endpoint_outage_backoff_max_ms: default_me_single_endpoint_outage_backoff_max_ms(),
-            me_single_endpoint_shadow_rotate_every_secs: default_me_single_endpoint_shadow_rotate_every_secs(),
+            me_single_endpoint_outage_mode_enabled: default_me_single_endpoint_outage_mode_enabled(
+            ),
+            me_single_endpoint_outage_disable_quarantine:
+                default_me_single_endpoint_outage_disable_quarantine(),
+            me_single_endpoint_outage_backoff_min_ms:
+                default_me_single_endpoint_outage_backoff_min_ms(),
+            me_single_endpoint_outage_backoff_max_ms:
+                default_me_single_endpoint_outage_backoff_max_ms(),
+            me_single_endpoint_shadow_rotate_every_secs:
+                default_me_single_endpoint_shadow_rotate_every_secs(),
             me_floor_mode: MeFloorMode::default(),
             me_adaptive_floor_idle_secs: default_me_adaptive_floor_idle_secs(),
-            me_adaptive_floor_min_writers_single_endpoint: default_me_adaptive_floor_min_writers_single_endpoint(),
-            me_adaptive_floor_min_writers_multi_endpoint: default_me_adaptive_floor_min_writers_multi_endpoint(),
+            me_adaptive_floor_min_writers_single_endpoint:
+                default_me_adaptive_floor_min_writers_single_endpoint(),
+            me_adaptive_floor_min_writers_multi_endpoint:
+                default_me_adaptive_floor_min_writers_multi_endpoint(),
             me_adaptive_floor_recover_grace_secs: default_me_adaptive_floor_recover_grace_secs(),
-            me_adaptive_floor_writers_per_core_total: default_me_adaptive_floor_writers_per_core_total(),
+            me_adaptive_floor_writers_per_core_total:
+                default_me_adaptive_floor_writers_per_core_total(),
             me_adaptive_floor_cpu_cores_override: default_me_adaptive_floor_cpu_cores_override(),
-            me_adaptive_floor_max_extra_writers_single_per_core: default_me_adaptive_floor_max_extra_writers_single_per_core(),
-            me_adaptive_floor_max_extra_writers_multi_per_core: default_me_adaptive_floor_max_extra_writers_multi_per_core(),
-            me_adaptive_floor_max_active_writers_per_core: default_me_adaptive_floor_max_active_writers_per_core(),
-            me_adaptive_floor_max_warm_writers_per_core: default_me_adaptive_floor_max_warm_writers_per_core(),
-            me_adaptive_floor_max_active_writers_global: default_me_adaptive_floor_max_active_writers_global(),
-            me_adaptive_floor_max_warm_writers_global: default_me_adaptive_floor_max_warm_writers_global(),
+            me_adaptive_floor_max_extra_writers_single_per_core:
+                default_me_adaptive_floor_max_extra_writers_single_per_core(),
+            me_adaptive_floor_max_extra_writers_multi_per_core:
+                default_me_adaptive_floor_max_extra_writers_multi_per_core(),
+            me_adaptive_floor_max_active_writers_per_core:
+                default_me_adaptive_floor_max_active_writers_per_core(),
+            me_adaptive_floor_max_warm_writers_per_core:
+                default_me_adaptive_floor_max_warm_writers_per_core(),
+            me_adaptive_floor_max_active_writers_global:
+                default_me_adaptive_floor_max_active_writers_global(),
+            me_adaptive_floor_max_warm_writers_global:
+                default_me_adaptive_floor_max_warm_writers_global(),
             upstream_connect_retry_attempts: default_upstream_connect_retry_attempts(),
             upstream_connect_retry_backoff_ms: default_upstream_connect_retry_backoff_ms(),
             upstream_connect_budget_ms: default_upstream_connect_budget_ms(),
@@ -987,7 +1001,8 @@ impl Default for GeneralConfig {
             me_socks_kdf_policy: MeSocksKdfPolicy::Strict,
             me_route_backpressure_base_timeout_ms: default_me_route_backpressure_base_timeout_ms(),
             me_route_backpressure_high_timeout_ms: default_me_route_backpressure_high_timeout_ms(),
-            me_route_backpressure_high_watermark_pct: default_me_route_backpressure_high_watermark_pct(),
+            me_route_backpressure_high_watermark_pct:
+                default_me_route_backpressure_high_watermark_pct(),
             me_health_interval_ms_unhealthy: default_me_health_interval_ms_unhealthy(),
             me_health_interval_ms_healthy: default_me_health_interval_ms_healthy(),
             me_admission_poll_ms: default_me_admission_poll_ms(),
@@ -1013,7 +1028,8 @@ impl Default for GeneralConfig {
             me_hardswap_warmup_delay_min_ms: default_me_hardswap_warmup_delay_min_ms(),
             me_hardswap_warmup_delay_max_ms: default_me_hardswap_warmup_delay_max_ms(),
             me_hardswap_warmup_extra_passes: default_me_hardswap_warmup_extra_passes(),
-            me_hardswap_warmup_pass_backoff_base_ms: default_me_hardswap_warmup_pass_backoff_base_ms(),
+            me_hardswap_warmup_pass_backoff_base_ms:
+                default_me_hardswap_warmup_pass_backoff_base_ms(),
             me_config_stable_snapshots: default_me_config_stable_snapshots(),
             me_config_apply_cooldown_secs: default_me_config_apply_cooldown_secs(),
             me_snapshot_require_http_2xx: default_me_snapshot_require_http_2xx(),
@@ -1057,8 +1073,10 @@ impl GeneralConfig {
     /// Resolve the active updater interval for ME infrastructure refresh tasks.
     /// `update_every` has priority, otherwise legacy proxy_*_auto_reload_secs are used.
     pub fn effective_update_every_secs(&self) -> u64 {
-        self.update_every
-            .unwrap_or_else(|| self.proxy_secret_auto_reload_secs.min(self.proxy_config_auto_reload_secs))
+        self.update_every.unwrap_or_else(|| {
+            self.proxy_secret_auto_reload_secs
+                .min(self.proxy_config_auto_reload_secs)
+        })
     }
 
     /// Resolve periodic zero-downtime reinit interval for ME writers.
@@ -1476,6 +1494,11 @@ pub enum UpstreamType {
         #[serde(default)]
         password: Option<String>,
     },
+    Shadowsocks {
+        url: String,
+        #[serde(default)]
+        interface: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1556,7 +1579,10 @@ impl ShowLink {
 }
 
 impl Serialize for ShowLink {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+    fn serialize<S: serde::Serializer>(
+        &self,
+        serializer: S,
+    ) -> std::result::Result<S::Ok, S::Error> {
         match self {
             ShowLink::None => Vec::<String>::new().serialize(serializer),
             ShowLink::All => serializer.serialize_str("*"),
@@ -1566,7 +1592,9 @@ impl Serialize for ShowLink {
 }
 
 impl<'de> Deserialize<'de> for ShowLink {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+    fn deserialize<D: serde::Deserializer<'de>>(
+        deserializer: D,
+    ) -> std::result::Result<Self, D::Error> {
         use serde::de;
 
         struct ShowLinkVisitor;
@@ -1582,14 +1610,14 @@ impl<'de> Deserialize<'de> for ShowLink {
                 if v == "*" {
                     Ok(ShowLink::All)
                 } else {
-                    Err(de::Error::invalid_value(
-                        de::Unexpected::Str(v),
-                        &r#""*""#,
-                    ))
+                    Err(de::Error::invalid_value(de::Unexpected::Str(v), &r#""*""#))
                 }
             }
 
-            fn visit_seq<A: de::SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<ShowLink, A::Error> {
+            fn visit_seq<A: de::SeqAccess<'de>>(
+                self,
+                mut seq: A,
+            ) -> std::result::Result<ShowLink, A::Error> {
                 let mut names = Vec::new();
                 while let Some(name) = seq.next_element::<String>()? {
                     names.push(name);
