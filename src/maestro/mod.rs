@@ -114,6 +114,7 @@ async fn run_inner(
     let data_path = cli_args.data_path;
     let cli_silent = cli_args.silent;
     let cli_log_level = cli_args.log_level;
+    let log_destination = cli_args.log_destination;
     let startup_cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
         Err(e) => {
@@ -213,17 +214,43 @@ async fn run_inner(
         )
         .await;
 
-    // Configure color output based on config
-    let fmt_layer = if config.general.disable_colors {
-        fmt::Layer::default().with_ansi(false)
-    } else {
-        fmt::Layer::default().with_ansi(true)
-    };
+    // Initialize logging based on destination
+    let _logging_guard: Option<crate::logging::LoggingGuard>;
+    match log_destination {
+        crate::logging::LogDestination::Stderr => {
+            // Default: log to stderr (works with systemd journald)
+            let fmt_layer = if config.general.disable_colors {
+                fmt::Layer::default().with_ansi(false)
+            } else {
+                fmt::Layer::default().with_ansi(true)
+            };
+            tracing_subscriber::registry()
+                .with(filter_layer)
+                .with(fmt_layer)
+                .init();
+            _logging_guard = None;
+        }
+        #[cfg(unix)]
+        crate::logging::LogDestination::Syslog => {
+            // Syslog: for OpenRC/FreeBSD
+            let logging_opts = crate::logging::LoggingOptions {
+                destination: log_destination,
+                disable_colors: true,
+            };
+            let (_, guard) = crate::logging::init_logging(&logging_opts, "info");
+            _logging_guard = Some(guard);
+        }
+        crate::logging::LogDestination::File { .. } => {
+            // File logging with optional rotation
+            let logging_opts = crate::logging::LoggingOptions {
+                destination: log_destination,
+                disable_colors: true,
+            };
+            let (_, guard) = crate::logging::init_logging(&logging_opts, "info");
+            _logging_guard = Some(guard);
+        }
+    }
 
-    tracing_subscriber::registry()
-        .with(filter_layer)
-        .with(fmt_layer)
-        .init();
     startup_tracker
         .complete_component(
             COMPONENT_TRACING_INIT,

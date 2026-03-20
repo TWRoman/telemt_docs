@@ -181,18 +181,20 @@ r#"#!/sbin/openrc-run
 
 description="{description}"
 command="{exe}"
-command_args="--daemon --pid-file {pid_file} {config}"
+command_args="--daemon --syslog --pid-file {pid_file} {config}"
 command_user="{user}:{group}"
 pidfile="{pid_file}"
 
 depend() {{
     need net
+    use logger
     after firewall
 }}
 
 start_pre() {{
     checkpath --directory --owner {user}:{group} --mode 0755 /var/run
     checkpath --directory --owner {user}:{group} --mode 0755 /var/lib/telemt
+    checkpath --directory --owner {user}:{group} --mode 0755 /var/log/telemt
 }}
 
 reload() {{
@@ -246,7 +248,7 @@ load_rc_config $name
 
 pidfile="${{telemt_pidfile}}"
 command="{exe}"
-command_args="--daemon --pid-file ${{telemt_pidfile}} ${{telemt_config}}"
+command_args="--daemon --syslog --pid-file ${{telemt_pidfile}} ${{telemt_config}}"
 
 start_precmd="telemt_prestart"
 reload_cmd="telemt_reload"

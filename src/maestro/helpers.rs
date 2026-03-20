@@ -8,6 +8,7 @@ use tracing::{debug, error, info, warn};
 
 use crate::cli;
 use crate::config::ProxyConfig;
+use crate::logging::LogDestination;
 use crate::transport::middle_proxy::{
     ProxyConfigData, fetch_proxy_config_with_raw, load_proxy_config_cache, save_proxy_config_cache,
 };
@@ -31,6 +32,7 @@ pub(crate) struct CliArgs {
     pub data_path: Option<PathBuf>,
     pub silent: bool,
     pub log_level: Option<String>,
+    pub log_destination: LogDestination,
 }
 
 pub(crate) fn parse_cli() -> CliArgs {
@@ -40,6 +42,9 @@ pub(crate) fn parse_cli() -> CliArgs {
     let mut log_level: Option<String> = None;
 
     let args: Vec<String> = std::env::args().skip(1).collect();
+
+    // Parse log destination
+    let log_destination = crate::logging::parse_log_destination(&args);
 
     // Check for --init first (handled before tokio)
     if let Some(init_opts) = cli::parse_init_args(&args) {
@@ -124,6 +129,7 @@ pub(crate) fn parse_cli() -> CliArgs {
         data_path,
         silent,
         log_level,
+        log_destination,
     }
 }
 
@@ -146,6 +152,12 @@ fn print_help() {
     eprintln!("  --log-level <LEVEL>     debug|verbose|normal|silent");
     eprintln!("  --help, -h              Show this help");
     eprintln!("  --version, -V           Show version");
+    eprintln!();
+    eprintln!("Logging options:");
+    eprintln!("  --log-file <PATH>       Log to file (default: stderr)");
+    eprintln!("  --log-file-daily <PATH> Log to file with daily rotation");
+    #[cfg(unix)]
+    eprintln!("  --syslog                Log to syslog (Unix only)");
     eprintln!();
     #[cfg(unix)]
     {
