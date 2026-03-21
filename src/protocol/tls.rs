@@ -183,10 +183,12 @@ impl TlsExtensionBuilder {
 
     /// Build final extensions with length prefix
     fn build(self) -> Vec<u8> {
+        let Ok(len) = u16::try_from(self.extensions.len()) else {
+            return Vec::new();
+        };
         let mut result = Vec::with_capacity(2 + self.extensions.len());
 
         // Extensions length (2 bytes)
-        let len = self.extensions.len() as u16;
         result.extend_from_slice(&len.to_be_bytes());
 
         // Extensions data
@@ -241,8 +243,13 @@ impl ServerHelloBuilder {
 
     /// Build ServerHello message (without record header)
     fn build_message(&self) -> Vec<u8> {
+        let Ok(session_id_len) = u8::try_from(self.session_id.len()) else {
+            return Vec::new();
+        };
         let extensions = self.extensions.extensions.clone();
-        let extensions_len = extensions.len() as u16;
+        let Ok(extensions_len) = u16::try_from(extensions.len()) else {
+            return Vec::new();
+        };
 
         // Calculate total length
         let body_len = 2 + // version
@@ -251,6 +258,9 @@ impl ServerHelloBuilder {
                        2 + // cipher suite
                        1 + // compression
                        2 + extensions.len(); // extensions length + data
+        if body_len > 0x00ff_ffff {
+            return Vec::new();
+        }
 
         let mut message = Vec::with_capacity(4 + body_len);
 
@@ -258,7 +268,10 @@ impl ServerHelloBuilder {
         message.push(0x02); // ServerHello message type
 
         // 3-byte length
-        let len_bytes = (body_len as u32).to_be_bytes();
+        let Ok(body_len_u32) = u32::try_from(body_len) else {
+            return Vec::new();
+        };
+        let len_bytes = body_len_u32.to_be_bytes();
         message.extend_from_slice(&len_bytes[1..4]);
 
         // Server version (TLS 1.2 in header, actual version in extension)
@@ -268,7 +281,7 @@ impl ServerHelloBuilder {
         message.extend_from_slice(&self.random);
 
         // Session ID
-        message.push(self.session_id.len() as u8);
+        message.push(session_id_len);
         message.extend_from_slice(&self.session_id);
 
         // Cipher suite
@@ -289,13 +302,19 @@ impl ServerHelloBuilder {
     /// Build complete ServerHello TLS record
     fn build_record(&self) -> Vec<u8> {
         let message = self.build_message();
+        if message.is_empty() {
+            return Vec::new();
+        }
+        let Ok(message_len) = u16::try_from(message.len()) else {
+            return Vec::new();
+        };
 
         let mut record = Vec::with_capacity(5 + message.len());
 
         // TLS record header
         record.push(TLS_RECORD_HANDSHAKE);
         record.extend_from_slice(&TLS_VERSION);
-        record.extend_from_slice(&(message.len() as u16).to_be_bytes());
+        record.extend_from_slice(&message_len.to_be_bytes());
 
         // Message
         record.extend_from_slice(&message);
@@ -910,3 +929,7 @@ mod adversarial_tests;
 #[cfg(test)]
 #[path = "tests/tls_fuzz_security_tests.rs"]
 mod fuzz_security_tests;
+
+#[cfg(test)]
+#[path = "tests/tls_length_cast_hardening_security_tests.rs"]
+mod length_cast_hardening_security_tests;
