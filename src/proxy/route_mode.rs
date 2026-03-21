@@ -71,6 +71,12 @@ impl RouteRuntimeController {
             if state.mode == mode {
                 return false;
             }
+            if matches!(mode, RelayRouteMode::Direct) {
+                self.direct_since_epoch_secs
+                    .store(now_epoch_secs(), Ordering::Relaxed);
+            } else {
+                self.direct_since_epoch_secs.store(0, Ordering::Relaxed);
+            }
             state.mode = mode;
             state.generation = state.generation.saturating_add(1);
             next = Some(*state);
@@ -79,13 +85,6 @@ impl RouteRuntimeController {
 
         if !changed {
             return None;
-        }
-
-        if matches!(mode, RelayRouteMode::Direct) {
-            self.direct_since_epoch_secs
-                .store(now_epoch_secs(), Ordering::Relaxed);
-        } else {
-            self.direct_since_epoch_secs.store(0, Ordering::Relaxed);
         }
 
         next
@@ -135,3 +134,7 @@ pub(crate) fn cutover_stagger_delay(session_id: u64, generation: u64) -> Duratio
 #[cfg(test)]
 #[path = "tests/route_mode_security_tests.rs"]
 mod security_tests;
+
+#[cfg(test)]
+#[path = "tests/route_mode_coherence_adversarial_tests.rs"]
+mod coherence_adversarial_tests;

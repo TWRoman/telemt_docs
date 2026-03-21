@@ -1273,3 +1273,7 @@ mod masking_shape_hardening_redteam_expected_fail_tests;
 #[cfg(test)]
 #[path = "tests/client_masking_shape_classifier_fuzz_redteam_expected_fail_tests.rs"]
 mod masking_shape_classifier_fuzz_redteam_expected_fail_tests;
+
+#[cfg(test)]
+#[path = "tests/client_masking_probe_evasion_blackhat_tests.rs"]
+mod masking_probe_evasion_blackhat_tests;

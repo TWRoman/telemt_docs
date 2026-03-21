@@ -364,6 +364,25 @@ impl<S: AsyncRead + Unpin> AsyncRead for StatsIo<S> {
             Poll::Ready(Ok(())) => {
                 let n = buf.filled().len() - before;
                 if n > 0 {
+                    let mut reached_quota_boundary = false;
+                    if let Some(limit) = this.quota_limit {
+                        let used = this.stats.get_user_total_octets(&this.user);
+                        if used >= limit {
+                            this.quota_exceeded.store(true, Ordering::Relaxed);
+                            return Poll::Ready(Err(quota_io_error()));
+                        }
+
+                        let remaining = limit - used;
+                        if (n as u64) > remaining {
+                            // Fail closed: when a single read chunk would cross quota,
+                            // stop relay immediately without accounting beyond the cap.
+                            this.quota_exceeded.store(true, Ordering::Relaxed);
+                            return Poll::Ready(Err(quota_io_error()));
+                        }
+
+                        reached_quota_boundary = (n as u64) == remaining;
+                    }
+
                     // C→S: client sent data
                     this.counters.c2s_bytes.fetch_add(n as u64, Ordering::Relaxed);
                     this.counters.c2s_ops.fetch_add(1, Ordering::Relaxed);
@@ -372,11 +391,8 @@ impl<S: AsyncRead + Unpin> AsyncRead for StatsIo<S> {
                     this.stats.add_user_octets_from(&this.user, n as u64);
                     this.stats.increment_user_msgs_from(&this.user);
 
-                    if let Some(limit) = this.quota_limit
-                        && this.stats.get_user_total_octets(&this.user) >= limit
-                    {
+                    if reached_quota_boundary {
                         this.quota_exceeded.store(true, Ordering::Relaxed);
-                        return Poll::Ready(Err(quota_io_error()));
                     }
 
                     trace!(user = %this.user, bytes = n, "C->S");
@@ -702,3 +718,15 @@ mod adversarial_tests;
 #[cfg(test)]
 #[path = "tests/relay_quota_lock_pressure_adversarial_tests.rs"]
 mod relay_quota_lock_pressure_adversarial_tests;
+
+#[cfg(test)]
+#[path = "tests/relay_quota_boundary_blackhat_tests.rs"]
+mod relay_quota_boundary_blackhat_tests;
+
+#[cfg(test)]
+#[path = "tests/relay_quota_model_adversarial_tests.rs"]
+mod relay_quota_model_adversarial_tests;
+
+#[cfg(test)]
+#[path = "tests/relay_quota_overflow_regression_tests.rs"]
+mod relay_quota_overflow_regression_tests;
