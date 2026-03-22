@@ -26,6 +26,28 @@ enum RouteConnectionGauge {
     Middle,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum MeD2cFlushReason {
+    QueueDrain,
+    BatchFrames,
+    BatchBytes,
+    MaxDelay,
+    AckImmediate,
+    Close,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MeD2cWriteMode {
+    Coalesced,
+    Split,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum MeD2cQuotaRejectStage {
+    PreWrite,
+    PostWrite,
+}
+
 #[must_use = "RouteConnectionLease must be kept alive to hold the connection gauge increment"]
 pub struct RouteConnectionLease {
     stats: Arc<Stats>,
@@ -140,6 +162,44 @@ pub struct Stats {
     me_route_drop_queue_full: AtomicU64,
     me_route_drop_queue_full_base: AtomicU64,
     me_route_drop_queue_full_high: AtomicU64,
+    me_d2c_batches_total: AtomicU64,
+    me_d2c_batch_frames_total: AtomicU64,
+    me_d2c_batch_bytes_total: AtomicU64,
+    me_d2c_flush_reason_queue_drain_total: AtomicU64,
+    me_d2c_flush_reason_batch_frames_total: AtomicU64,
+    me_d2c_flush_reason_batch_bytes_total: AtomicU64,
+    me_d2c_flush_reason_max_delay_total: AtomicU64,
+    me_d2c_flush_reason_ack_immediate_total: AtomicU64,
+    me_d2c_flush_reason_close_total: AtomicU64,
+    me_d2c_data_frames_total: AtomicU64,
+    me_d2c_ack_frames_total: AtomicU64,
+    me_d2c_payload_bytes_total: AtomicU64,
+    me_d2c_write_mode_coalesced_total: AtomicU64,
+    me_d2c_write_mode_split_total: AtomicU64,
+    me_d2c_quota_reject_pre_write_total: AtomicU64,
+    me_d2c_quota_reject_post_write_total: AtomicU64,
+    me_d2c_frame_buf_shrink_total: AtomicU64,
+    me_d2c_frame_buf_shrink_bytes_total: AtomicU64,
+    me_d2c_batch_frames_bucket_1: AtomicU64,
+    me_d2c_batch_frames_bucket_2_4: AtomicU64,
+    me_d2c_batch_frames_bucket_5_8: AtomicU64,
+    me_d2c_batch_frames_bucket_9_16: AtomicU64,
+    me_d2c_batch_frames_bucket_17_32: AtomicU64,
+    me_d2c_batch_frames_bucket_gt_32: AtomicU64,
+    me_d2c_batch_bytes_bucket_0_1k: AtomicU64,
+    me_d2c_batch_bytes_bucket_1k_4k: AtomicU64,
+    me_d2c_batch_bytes_bucket_4k_16k: AtomicU64,
+    me_d2c_batch_bytes_bucket_16k_64k: AtomicU64,
+    me_d2c_batch_bytes_bucket_64k_128k: AtomicU64,
+    me_d2c_batch_bytes_bucket_gt_128k: AtomicU64,
+    me_d2c_flush_duration_us_bucket_0_50: AtomicU64,
+    me_d2c_flush_duration_us_bucket_51_200: AtomicU64,
+    me_d2c_flush_duration_us_bucket_201_1000: AtomicU64,
+    me_d2c_flush_duration_us_bucket_1001_5000: AtomicU64,
+    me_d2c_flush_duration_us_bucket_5001_20000: AtomicU64,
+    me_d2c_flush_duration_us_bucket_gt_20000: AtomicU64,
+    me_d2c_batch_timeout_armed_total: AtomicU64,
+    me_d2c_batch_timeout_fired_total: AtomicU64,
     me_writer_pick_sorted_rr_success_try_total: AtomicU64,
     me_writer_pick_sorted_rr_success_fallback_total: AtomicU64,
     me_writer_pick_sorted_rr_full_total: AtomicU64,
@@ -591,6 +651,215 @@ impl Stats {
     pub fn increment_me_route_drop_queue_full_high(&self) {
         if self.telemetry_me_allows_normal() {
             self.me_route_drop_queue_full_high
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    pub fn increment_me_d2c_batches_total(&self) {
+        if self.telemetry_me_allows_normal() {
+            self.me_d2c_batches_total.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    pub fn add_me_d2c_batch_frames_total(&self, frames: u64) {
+        if self.telemetry_me_allows_normal() {
+            self.me_d2c_batch_frames_total
+                .fetch_add(frames, Ordering::Relaxed);
+        }
+    }
+    pub fn add_me_d2c_batch_bytes_total(&self, bytes: u64) {
+        if self.telemetry_me_allows_normal() {
+            self.me_d2c_batch_bytes_total
+                .fetch_add(bytes, Ordering::Relaxed);
+        }
+    }
+    pub fn increment_me_d2c_flush_reason(&self, reason: MeD2cFlushReason) {
+        if !self.telemetry_me_allows_normal() {
+            return;
+        }
+        match reason {
+            MeD2cFlushReason::QueueDrain => {
+                self.me_d2c_flush_reason_queue_drain_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            MeD2cFlushReason::BatchFrames => {
+                self.me_d2c_flush_reason_batch_frames_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            MeD2cFlushReason::BatchBytes => {
+                self.me_d2c_flush_reason_batch_bytes_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            MeD2cFlushReason::MaxDelay => {
+                self.me_d2c_flush_reason_max_delay_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            MeD2cFlushReason::AckImmediate => {
+                self.me_d2c_flush_reason_ack_immediate_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            MeD2cFlushReason::Close => {
+                self.me_d2c_flush_reason_close_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    pub fn increment_me_d2c_data_frames_total(&self) {
+        if self.telemetry_me_allows_normal() {
+            self.me_d2c_data_frames_total.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    pub fn increment_me_d2c_ack_frames_total(&self) {
+        if self.telemetry_me_allows_normal() {
+            self.me_d2c_ack_frames_total.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    pub fn add_me_d2c_payload_bytes_total(&self, bytes: u64) {
+        if self.telemetry_me_allows_normal() {
+            self.me_d2c_payload_bytes_total
+                .fetch_add(bytes, Ordering::Relaxed);
+        }
+    }
+    pub fn increment_me_d2c_write_mode(&self, mode: MeD2cWriteMode) {
+        if !self.telemetry_me_allows_normal() {
+            return;
+        }
+        match mode {
+            MeD2cWriteMode::Coalesced => {
+                self.me_d2c_write_mode_coalesced_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            MeD2cWriteMode::Split => {
+                self.me_d2c_write_mode_split_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    pub fn increment_me_d2c_quota_reject_total(&self, stage: MeD2cQuotaRejectStage) {
+        if !self.telemetry_me_allows_normal() {
+            return;
+        }
+        match stage {
+            MeD2cQuotaRejectStage::PreWrite => {
+                self.me_d2c_quota_reject_pre_write_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            MeD2cQuotaRejectStage::PostWrite => {
+                self.me_d2c_quota_reject_post_write_total
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    pub fn observe_me_d2c_frame_buf_shrink(&self, bytes_freed: u64) {
+        if !self.telemetry_me_allows_normal() {
+            return;
+        }
+        self.me_d2c_frame_buf_shrink_total
+            .fetch_add(1, Ordering::Relaxed);
+        self.me_d2c_frame_buf_shrink_bytes_total
+            .fetch_add(bytes_freed, Ordering::Relaxed);
+    }
+    pub fn observe_me_d2c_batch_frames(&self, frames: u64) {
+        if !self.telemetry_me_allows_debug() {
+            return;
+        }
+        match frames {
+            0 => {}
+            1 => {
+                self.me_d2c_batch_frames_bucket_1
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            2..=4 => {
+                self.me_d2c_batch_frames_bucket_2_4
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            5..=8 => {
+                self.me_d2c_batch_frames_bucket_5_8
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            9..=16 => {
+                self.me_d2c_batch_frames_bucket_9_16
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            17..=32 => {
+                self.me_d2c_batch_frames_bucket_17_32
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                self.me_d2c_batch_frames_bucket_gt_32
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    pub fn observe_me_d2c_batch_bytes(&self, bytes: u64) {
+        if !self.telemetry_me_allows_debug() {
+            return;
+        }
+        match bytes {
+            0..=1024 => {
+                self.me_d2c_batch_bytes_bucket_0_1k
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            1025..=4096 => {
+                self.me_d2c_batch_bytes_bucket_1k_4k
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            4097..=16_384 => {
+                self.me_d2c_batch_bytes_bucket_4k_16k
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            16_385..=65_536 => {
+                self.me_d2c_batch_bytes_bucket_16k_64k
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            65_537..=131_072 => {
+                self.me_d2c_batch_bytes_bucket_64k_128k
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                self.me_d2c_batch_bytes_bucket_gt_128k
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    pub fn observe_me_d2c_flush_duration_us(&self, duration_us: u64) {
+        if !self.telemetry_me_allows_debug() {
+            return;
+        }
+        match duration_us {
+            0..=50 => {
+                self.me_d2c_flush_duration_us_bucket_0_50
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            51..=200 => {
+                self.me_d2c_flush_duration_us_bucket_51_200
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            201..=1000 => {
+                self.me_d2c_flush_duration_us_bucket_201_1000
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            1001..=5000 => {
+                self.me_d2c_flush_duration_us_bucket_1001_5000
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            5001..=20_000 => {
+                self.me_d2c_flush_duration_us_bucket_5001_20000
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+            _ => {
+                self.me_d2c_flush_duration_us_bucket_gt_20000
+                    .fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
+    pub fn increment_me_d2c_batch_timeout_armed_total(&self) {
+        if self.telemetry_me_allows_debug() {
+            self.me_d2c_batch_timeout_armed_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    pub fn increment_me_d2c_batch_timeout_fired_total(&self) {
+        if self.telemetry_me_allows_debug() {
+            self.me_d2c_batch_timeout_fired_total
                 .fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -1228,6 +1497,142 @@ impl Stats {
     }
     pub fn get_me_route_drop_queue_full_high(&self) -> u64 {
         self.me_route_drop_queue_full_high.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batches_total(&self) -> u64 {
+        self.me_d2c_batches_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_frames_total(&self) -> u64 {
+        self.me_d2c_batch_frames_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_bytes_total(&self) -> u64 {
+        self.me_d2c_batch_bytes_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_reason_queue_drain_total(&self) -> u64 {
+        self.me_d2c_flush_reason_queue_drain_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_reason_batch_frames_total(&self) -> u64 {
+        self.me_d2c_flush_reason_batch_frames_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_reason_batch_bytes_total(&self) -> u64 {
+        self.me_d2c_flush_reason_batch_bytes_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_reason_max_delay_total(&self) -> u64 {
+        self.me_d2c_flush_reason_max_delay_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_reason_ack_immediate_total(&self) -> u64 {
+        self.me_d2c_flush_reason_ack_immediate_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_reason_close_total(&self) -> u64 {
+        self.me_d2c_flush_reason_close_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_data_frames_total(&self) -> u64 {
+        self.me_d2c_data_frames_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_ack_frames_total(&self) -> u64 {
+        self.me_d2c_ack_frames_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_payload_bytes_total(&self) -> u64 {
+        self.me_d2c_payload_bytes_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_write_mode_coalesced_total(&self) -> u64 {
+        self.me_d2c_write_mode_coalesced_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_write_mode_split_total(&self) -> u64 {
+        self.me_d2c_write_mode_split_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_quota_reject_pre_write_total(&self) -> u64 {
+        self.me_d2c_quota_reject_pre_write_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_quota_reject_post_write_total(&self) -> u64 {
+        self.me_d2c_quota_reject_post_write_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_frame_buf_shrink_total(&self) -> u64 {
+        self.me_d2c_frame_buf_shrink_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_frame_buf_shrink_bytes_total(&self) -> u64 {
+        self.me_d2c_frame_buf_shrink_bytes_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_frames_bucket_1(&self) -> u64 {
+        self.me_d2c_batch_frames_bucket_1.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_frames_bucket_2_4(&self) -> u64 {
+        self.me_d2c_batch_frames_bucket_2_4.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_frames_bucket_5_8(&self) -> u64 {
+        self.me_d2c_batch_frames_bucket_5_8.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_frames_bucket_9_16(&self) -> u64 {
+        self.me_d2c_batch_frames_bucket_9_16.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_frames_bucket_17_32(&self) -> u64 {
+        self.me_d2c_batch_frames_bucket_17_32
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_frames_bucket_gt_32(&self) -> u64 {
+        self.me_d2c_batch_frames_bucket_gt_32
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_bytes_bucket_0_1k(&self) -> u64 {
+        self.me_d2c_batch_bytes_bucket_0_1k.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_bytes_bucket_1k_4k(&self) -> u64 {
+        self.me_d2c_batch_bytes_bucket_1k_4k.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_bytes_bucket_4k_16k(&self) -> u64 {
+        self.me_d2c_batch_bytes_bucket_4k_16k.load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_bytes_bucket_16k_64k(&self) -> u64 {
+        self.me_d2c_batch_bytes_bucket_16k_64k
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_bytes_bucket_64k_128k(&self) -> u64 {
+        self.me_d2c_batch_bytes_bucket_64k_128k
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_bytes_bucket_gt_128k(&self) -> u64 {
+        self.me_d2c_batch_bytes_bucket_gt_128k
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_duration_us_bucket_0_50(&self) -> u64 {
+        self.me_d2c_flush_duration_us_bucket_0_50
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_duration_us_bucket_51_200(&self) -> u64 {
+        self.me_d2c_flush_duration_us_bucket_51_200
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_duration_us_bucket_201_1000(&self) -> u64 {
+        self.me_d2c_flush_duration_us_bucket_201_1000
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_duration_us_bucket_1001_5000(&self) -> u64 {
+        self.me_d2c_flush_duration_us_bucket_1001_5000
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_duration_us_bucket_5001_20000(&self) -> u64 {
+        self.me_d2c_flush_duration_us_bucket_5001_20000
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_flush_duration_us_bucket_gt_20000(&self) -> u64 {
+        self.me_d2c_flush_duration_us_bucket_gt_20000
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_timeout_armed_total(&self) -> u64 {
+        self.me_d2c_batch_timeout_armed_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_d2c_batch_timeout_fired_total(&self) -> u64 {
+        self.me_d2c_batch_timeout_fired_total
+            .load(Ordering::Relaxed)
     }
     pub fn get_me_writer_pick_sorted_rr_success_try_total(&self) -> u64 {
         self.me_writer_pick_sorted_rr_success_try_total
@@ -1898,9 +2303,83 @@ mod tests {
         stats.increment_me_crc_mismatch();
         stats.increment_me_keepalive_sent();
         stats.increment_me_route_drop_queue_full();
+        stats.increment_me_d2c_batches_total();
+        stats.add_me_d2c_batch_frames_total(4);
+        stats.add_me_d2c_batch_bytes_total(4096);
+        stats.increment_me_d2c_flush_reason(MeD2cFlushReason::BatchBytes);
+        stats.increment_me_d2c_write_mode(MeD2cWriteMode::Coalesced);
+        stats.increment_me_d2c_quota_reject_total(MeD2cQuotaRejectStage::PreWrite);
+        stats.observe_me_d2c_frame_buf_shrink(1024);
+        stats.observe_me_d2c_batch_frames(4);
+        stats.observe_me_d2c_batch_bytes(4096);
+        stats.observe_me_d2c_flush_duration_us(120);
+        stats.increment_me_d2c_batch_timeout_armed_total();
+        stats.increment_me_d2c_batch_timeout_fired_total();
         assert_eq!(stats.get_me_crc_mismatch(), 0);
         assert_eq!(stats.get_me_keepalive_sent(), 0);
         assert_eq!(stats.get_me_route_drop_queue_full(), 0);
+        assert_eq!(stats.get_me_d2c_batches_total(), 0);
+        assert_eq!(stats.get_me_d2c_flush_reason_batch_bytes_total(), 0);
+        assert_eq!(stats.get_me_d2c_write_mode_coalesced_total(), 0);
+        assert_eq!(stats.get_me_d2c_quota_reject_pre_write_total(), 0);
+        assert_eq!(stats.get_me_d2c_frame_buf_shrink_total(), 0);
+        assert_eq!(stats.get_me_d2c_batch_frames_bucket_2_4(), 0);
+        assert_eq!(stats.get_me_d2c_batch_bytes_bucket_1k_4k(), 0);
+        assert_eq!(stats.get_me_d2c_flush_duration_us_bucket_51_200(), 0);
+        assert_eq!(stats.get_me_d2c_batch_timeout_armed_total(), 0);
+        assert_eq!(stats.get_me_d2c_batch_timeout_fired_total(), 0);
+    }
+
+    #[test]
+    fn test_telemetry_policy_me_normal_blocks_d2c_debug_metrics() {
+        let stats = Stats::new();
+        stats.apply_telemetry_policy(TelemetryPolicy {
+            core_enabled: true,
+            user_enabled: true,
+            me_level: MeTelemetryLevel::Normal,
+        });
+
+        stats.increment_me_d2c_batches_total();
+        stats.add_me_d2c_batch_frames_total(2);
+        stats.add_me_d2c_batch_bytes_total(2048);
+        stats.increment_me_d2c_flush_reason(MeD2cFlushReason::QueueDrain);
+        stats.observe_me_d2c_batch_frames(2);
+        stats.observe_me_d2c_batch_bytes(2048);
+        stats.observe_me_d2c_flush_duration_us(100);
+        stats.increment_me_d2c_batch_timeout_armed_total();
+        stats.increment_me_d2c_batch_timeout_fired_total();
+
+        assert_eq!(stats.get_me_d2c_batches_total(), 1);
+        assert_eq!(stats.get_me_d2c_batch_frames_total(), 2);
+        assert_eq!(stats.get_me_d2c_batch_bytes_total(), 2048);
+        assert_eq!(stats.get_me_d2c_flush_reason_queue_drain_total(), 1);
+        assert_eq!(stats.get_me_d2c_batch_frames_bucket_2_4(), 0);
+        assert_eq!(stats.get_me_d2c_batch_bytes_bucket_1k_4k(), 0);
+        assert_eq!(stats.get_me_d2c_flush_duration_us_bucket_51_200(), 0);
+        assert_eq!(stats.get_me_d2c_batch_timeout_armed_total(), 0);
+        assert_eq!(stats.get_me_d2c_batch_timeout_fired_total(), 0);
+    }
+
+    #[test]
+    fn test_telemetry_policy_me_debug_enables_d2c_debug_metrics() {
+        let stats = Stats::new();
+        stats.apply_telemetry_policy(TelemetryPolicy {
+            core_enabled: true,
+            user_enabled: true,
+            me_level: MeTelemetryLevel::Debug,
+        });
+
+        stats.observe_me_d2c_batch_frames(7);
+        stats.observe_me_d2c_batch_bytes(70_000);
+        stats.observe_me_d2c_flush_duration_us(1400);
+        stats.increment_me_d2c_batch_timeout_armed_total();
+        stats.increment_me_d2c_batch_timeout_fired_total();
+
+        assert_eq!(stats.get_me_d2c_batch_frames_bucket_5_8(), 1);
+        assert_eq!(stats.get_me_d2c_batch_bytes_bucket_64k_128k(), 1);
+        assert_eq!(stats.get_me_d2c_flush_duration_us_bucket_1001_5000(), 1);
+        assert_eq!(stats.get_me_d2c_batch_timeout_armed_total(), 1);
+        assert_eq!(stats.get_me_d2c_batch_timeout_fired_total(), 1);
     }
 
     #[test]
