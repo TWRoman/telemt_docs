@@ -18,10 +18,10 @@ env:
   CARGO_TERM_COLOR: always
   BINARY_NAME: telemt
 
+jobs:
 # ==========================
 # GNU / glibc
 # ==========================
-jobs:
   build-gnu:
     name: GNU ${{ matrix.target }}
     runs-on: ubuntu-latest
@@ -66,7 +66,7 @@ jobs:
 
       - name: Build
         run: |
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-gnu" ]]; then
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-gnu" ]; then
             export CC=aarch64-linux-gnu-gcc
             export CXX=aarch64-linux-gnu-g++
             export CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc
@@ -101,14 +101,14 @@ jobs:
             dist/${{ matrix.asset }}.sha256
 
 # ==========================
-# MUSL (isolated environment)
+# MUSL
 # ==========================
   build-musl:
     name: MUSL ${{ matrix.target }}
     runs-on: ubuntu-latest
 
     container:
-      image: rust:1.75-slim-bookworm
+      image: rust:slim-bookworm
 
     strategy:
       fail-fast: false
@@ -122,7 +122,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install deps (musl env)
+      - name: Install deps
         run: |
           apt-get update
           apt-get install -y \
@@ -130,12 +130,48 @@ jobs:
             pkg-config \
             curl
 
+      # 💾 cache toolchain
+      - uses: actions/cache@v4
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        with:
+          path: ~/.musl-aarch64
+          key: musl-toolchain-aarch64-v1
+
+      # 🔥 надёжная установка
       - name: Install aarch64 musl toolchain
         if: matrix.target == 'aarch64-unknown-linux-musl'
         run: |
-          curl -LO https://musl.cc/aarch64-linux-musl-cross.tgz
-          tar -xzf aarch64-linux-musl-cross.tgz
-          echo "$PWD/aarch64-linux-musl-cross/bin" >> $GITHUB_PATH
+          set -e
+
+          TOOLCHAIN_DIR="$HOME/.musl-aarch64"
+          ARCHIVE="aarch64-linux-musl-cross.tgz"
+
+          if [ -x "$TOOLCHAIN_DIR/bin/aarch64-linux-musl-gcc" ]; then
+            echo "✅ musl toolchain already installed"
+          else
+            echo "⬇️ downloading musl toolchain..."
+
+            download() {
+              url="$1"
+              echo "→ trying $url"
+              curl -fL \
+                --retry 5 \
+                --retry-delay 3 \
+                --connect-timeout 10 \
+                --max-time 120 \
+                -o "$ARCHIVE" "$url" && return 0
+              return 1
+            }
+
+            download "https://musl.cc/$ARCHIVE" || \
+            download "https://more.musl.cc/$ARCHIVE" || \
+            { echo "❌ failed to download musl toolchain"; exit 1; }
+
+            mkdir -p "$TOOLCHAIN_DIR"
+            tar -xzf "$ARCHIVE" --strip-components=1 -C "$TOOLCHAIN_DIR"
+          fi
+
+          echo "$TOOLCHAIN_DIR/bin" >> $GITHUB_PATH
 
       - name: Add rust target
         run: rustup target add ${{ matrix.target }}
@@ -150,7 +186,7 @@ jobs:
 
       - name: Build
         run: |
-          if [[ "${{ matrix.target }}" == "aarch64-unknown-linux-musl" ]]; then
+          if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
             export CC=aarch64-linux-musl-gcc
             export CC_aarch64_unknown_linux_musl=aarch64-linux-musl-gcc
             export RUSTFLAGS="-C target-feature=+crt-static -C linker=aarch64-linux-musl-gcc"
