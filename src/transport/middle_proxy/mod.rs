@@ -4,7 +4,6 @@ mod codec;
 mod config_updater;
 mod handshake;
 mod health;
-mod http_fetch;
 #[cfg(test)]
 #[path = "tests/health_adversarial_tests.rs"]
 mod health_adversarial_tests;
@@ -14,6 +13,7 @@ mod health_integration_tests;
 #[cfg(test)]
 #[path = "tests/health_regression_tests.rs"]
 mod health_regression_tests;
+mod http_fetch;
 mod ping;
 mod pool;
 mod pool_config;
@@ -59,6 +59,7 @@ pub use pool::MePool;
 pub use pool_nat::{detect_public_ip, stun_probe};
 pub use registry::ConnRegistry;
 pub use rotation::{MeReinitTrigger, me_reinit_scheduler, me_rotation_task};
+#[allow(unused_imports)]
 pub use secret::{fetch_proxy_secret, fetch_proxy_secret_with_upstream};
 pub(crate) use selftest::{bnd_snapshot, timeskew_snapshot, upstream_bnd_snapshots};
 pub use wire::proto_flags_for_tag;

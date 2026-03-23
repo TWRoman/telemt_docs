@@ -34,8 +34,8 @@ fn build_tls_client_config() -> Arc<rustls::ClientConfig> {
 }
 
 fn extract_host_port_path(url: &str) -> Result<(String, u16, String)> {
-    let parsed = url::Url::parse(url)
-        .map_err(|e| ProxyError::Proxy(format!("invalid URL '{url}': {e}")))?;
+    let parsed =
+        url::Url::parse(url).map_err(|e| ProxyError::Proxy(format!("invalid URL '{url}': {e}")))?;
     if parsed.scheme() != "https" {
         return Err(ProxyError::Proxy(format!(
             "unsupported URL scheme '{}': only https is supported",
@@ -92,13 +92,9 @@ async fn connect_https_transport(
         let target = resolve_target_addr(host, port).await?;
         return timeout(HTTP_CONNECT_TIMEOUT, manager.connect(target, None, None))
             .await
-            .map_err(|_| {
-                ProxyError::Proxy(format!("upstream connect timeout for {host}:{port}"))
-            })?
+            .map_err(|_| ProxyError::Proxy(format!("upstream connect timeout for {host}:{port}")))?
             .map_err(|e| {
-                ProxyError::Proxy(format!(
-                    "upstream connect failed for {host}:{port}: {e}"
-                ))
+                ProxyError::Proxy(format!("upstream connect failed for {host}:{port}: {e}"))
             });
     }
 

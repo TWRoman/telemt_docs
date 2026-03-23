@@ -5,8 +5,8 @@ use tracing::{debug, info, warn};
 
 use super::http_fetch::https_get;
 use super::selftest::record_timeskew_sample;
-use crate::transport::UpstreamManager;
 use crate::error::{ProxyError, Result};
+use crate::transport::UpstreamManager;
 
 pub const PROXY_SECRET_MIN_LEN: usize = 32;
 
@@ -36,6 +36,7 @@ pub(super) fn validate_proxy_secret_len(data_len: usize, max_len: usize) -> Resu
 }
 
 /// Fetch Telegram proxy-secret binary.
+#[allow(dead_code)]
 pub async fn fetch_proxy_secret(cache_path: Option<&str>, max_len: usize) -> Result<Vec<u8>> {
     fetch_proxy_secret_with_upstream(cache_path, max_len, None).await
 }
@@ -88,6 +89,7 @@ pub async fn fetch_proxy_secret_with_upstream(
     }
 }
 
+#[allow(dead_code)]
 pub async fn download_proxy_secret_with_max_len(max_len: usize) -> Result<Vec<u8>> {
     download_proxy_secret_with_max_len_via_upstream(max_len, None).await
 }

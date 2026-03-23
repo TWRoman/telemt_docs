@@ -13,8 +13,8 @@ use crate::config::ProxyConfig;
 use crate::error::Result;
 use crate::transport::UpstreamManager;
 
-use super::http_fetch::https_get;
 use super::MePool;
+use super::http_fetch::https_get;
 use super::rotation::{MeReinitTrigger, enqueue_reinit_trigger};
 use super::secret::download_proxy_secret_with_max_len_via_upstream;
 use super::selftest::record_timeskew_sample;
@@ -97,6 +97,7 @@ pub async fn save_proxy_config_cache(path: &str, raw_text: &str) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub async fn fetch_proxy_config_with_raw(url: &str) -> Result<(ProxyConfigData, String)> {
     fetch_proxy_config_with_raw_via_upstream(url, None).await
 }
@@ -264,6 +265,7 @@ fn parse_proxy_line(line: &str) -> Option<(i32, IpAddr, u16)> {
     Some((dc, ip, port))
 }
 
+#[allow(dead_code)]
 pub async fn fetch_proxy_config(url: &str) -> Result<ProxyConfigData> {
     fetch_proxy_config_via_upstream(url, None).await
 }
@@ -390,7 +392,11 @@ async fn run_update_cycle(
     }
 
     let mut ready_v6: Option<(ProxyConfigData, u64)> = None;
-    let cfg_v6 = retry_fetch("https://core.telegram.org/getProxyConfigV6", upstream.clone()).await;
+    let cfg_v6 = retry_fetch(
+        "https://core.telegram.org/getProxyConfigV6",
+        upstream.clone(),
+    )
+    .await;
     if let Some(cfg_v6) = cfg_v6
         && snapshot_passes_guards(cfg, &cfg_v6, "getProxyConfigV6")
     {
