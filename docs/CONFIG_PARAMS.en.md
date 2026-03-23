@@ -20,7 +20,7 @@ This document lists all configuration keys accepted by `config.toml`.
 | Parameter | Type | Default | Constraints / validation | Description |
 |---|---|---|---|---|
 | data_path | `String \| null` | `null` | — | Optional runtime data directory path. |
-| prefer_ipv6 | `bool` | `false` | — | Prefer IPv6 where applicable in runtime logic. |
+| prefer_ipv6 | `bool` | `false` | Deprecated. Use `network.prefer`. | Deprecated legacy IPv6 preference flag migrated to `network.prefer`. |
 | fast_mode | `bool` | `true` | — | Enables fast-path optimizations for traffic processing. |
 | use_middle_proxy | `bool` | `true` | none | Enables ME transport mode; if `false`, runtime falls back to direct DC routing. |
 | proxy_secret_path | `String \| null` | `"proxy-secret"` | Path may be `null`. | Path to Telegram infrastructure proxy-secret file used by ME handshake logic. |
@@ -44,6 +44,7 @@ This document lists all configuration keys accepted by `config.toml`.
 | me_writer_cmd_channel_capacity | `usize` | `4096` | Must be `> 0`. | Capacity of per-writer command channel. |
 | me_route_channel_capacity | `usize` | `768` | Must be `> 0`. | Capacity of per-connection ME response route channel. |
 | me_c2me_channel_capacity | `usize` | `1024` | Must be `> 0`. | Capacity of per-client command queue (client reader -> ME sender). |
+| me_c2me_send_timeout_ms | `u64` | `4000` | `0..=60000`. | Maximum wait for enqueueing client->ME commands when the per-client queue is full (`0` keeps legacy unbounded wait). |
 | me_reader_route_data_wait_ms | `u64` | `2` | `0..=20`. | Bounded wait for routing ME DATA to per-connection queue (`0` = no wait). |
 | me_d2c_flush_batch_max_frames | `usize` | `32` | `1..=512`. | Max ME->client frames coalesced before flush. |
 | me_d2c_flush_batch_max_bytes | `usize` | `131072` | `4096..=2_097_152`. | Max ME->client payload bytes coalesced before flush. |
@@ -105,6 +106,8 @@ This document lists all configuration keys accepted by `config.toml`.
 | me_warn_rate_limit_ms | `u64` | `5000` | Must be `> 0`. | Cooldown for repetitive ME warning logs (ms). |
 | me_route_no_writer_mode | `"async_recovery_failfast" \| "inline_recovery_legacy" \| "hybrid_async_persistent"` | `"hybrid_async_persistent"` | — | Route behavior when no writer is immediately available. |
 | me_route_no_writer_wait_ms | `u64` | `250` | `10..=5000`. | Max wait in async-recovery failfast mode (ms). |
+| me_route_hybrid_max_wait_ms | `u64` | `3000` | `50..=60000`. | Maximum cumulative wait in hybrid no-writer mode before failfast fallback (ms). |
+| me_route_blocking_send_timeout_ms | `u64` | `250` | `0..=5000`. | Maximum wait for blocking route-channel send fallback (`0` keeps legacy unbounded wait). |
 | me_route_inline_recovery_attempts | `u32` | `3` | Must be `> 0`. | Inline recovery attempts in legacy mode. |
 | me_route_inline_recovery_wait_ms | `u64` | `3000` | `10..=30000`. | Max inline recovery wait in legacy mode (ms). |
 | fast_mode_min_tls_record | `usize` | `0` | — | Minimum TLS record size when fast-mode coalescing is enabled (`0` disables). |
@@ -124,6 +127,7 @@ This document lists all configuration keys accepted by `config.toml`.
 | me_secret_atomic_snapshot | `bool` | `true` | — | Keeps selector and secret bytes from the same snapshot atomically. |
 | proxy_secret_len_max | `usize` | `256` | Must be within `[32, 4096]`. | Upper length limit for accepted proxy-secret bytes. |
 | me_pool_drain_ttl_secs | `u64` | `90` | none | Time window where stale writers remain fallback-eligible after map change. |
+| me_instadrain | `bool` | `false` | — | Forces draining stale writers to be removed on the next cleanup tick, bypassing TTL/deadline waiting. |
 | me_pool_drain_threshold | `u64` | `128` | — | Max draining stale writers before batch force-close (`0` disables threshold cleanup). |
 | me_pool_drain_soft_evict_enabled | `bool` | `true` | — | Enables gradual soft-eviction of stale writers during drain/reinit instead of immediate hard close. |
 | me_pool_drain_soft_evict_grace_secs | `u64` | `30` | `0..=3600`. | Grace period before stale writers become soft-evict candidates. |
@@ -203,6 +207,7 @@ This document lists all configuration keys accepted by `config.toml`.
 | metrics_listen | `String \| null` | `null` | — | Full metrics bind address (`IP:PORT`), overrides `metrics_port`. |
 | metrics_whitelist | `IpNetwork[]` | `["127.0.0.1/32", "::1/128"]` | — | CIDR whitelist for metrics endpoint access. |
 | max_connections | `u32` | `10000` | — | Max concurrent client connections (`0` = unlimited). |
+| accept_permit_timeout_ms | `u64` | `250` | `0..=60000`. | Maximum wait for acquiring a connection-slot permit before the accepted connection is dropped (`0` keeps legacy unbounded wait). |
 
 Note: When `server.proxy_protocol` is enabled, incoming PROXY protocol headers are parsed from the first bytes of the connection and the client source address is replaced with `src_addr` from the header. For security, the peer source IP (the direct connection address) is verified against `server.proxy_protocol_trusted_cidrs`; if this list is empty, PROXY headers are rejected and the connection is considered untrusted. 
 
@@ -229,7 +234,7 @@ Note: When `server.proxy_protocol` is enabled, incoming PROXY protocol headers a
 |---|---|---|---|---|
 | ip | `IpAddr` | — | — | Listener bind IP. |
 | announce | `String \| null` | — | — | Public IP/domain announced in proxy links (priority over `announce_ip`). |
-| announce_ip | `IpAddr \| null` | — | — | Deprecated legacy announce IP (migrated to `announce` if needed). |
+| announce_ip | `IpAddr \| null` | — | Deprecated. Use `announce`. | Deprecated legacy announce IP (migrated to `announce` if needed). |
 | proxy_protocol | `bool \| null` | `null` | — | Per-listener override for PROXY protocol enable flag. |
 | reuse_allow | `bool` | `false` | — | Enables `SO_REUSEPORT` for multi-instance bind sharing. |
 

@@ -3,7 +3,7 @@
 1. Go to @MTProxybot bot.
 2. Enter the command `/newproxy`
 3. Send the server IP and port. For example: 1.2.3.4:443
-4. Open the config `nano /etc/telemt.toml`.
+4. Open the config `nano /etc/telemt/telemt.toml`.
 5. Copy and send the user secret from the [access.users] section to the bot.
 6. Copy the tag received from the bot. For example 1234567890abcdef1234567890abcdef.
 > [!WARNING]
@@ -32,6 +32,9 @@ use_middle_proxy = true
 hello = "ad_tag"
 hello2 = "ad_tag2"
 ```
+
+## Why is middle proxy (ME) needed
+https://github.com/telemt/telemt/discussions/167
 
 ## How many people can use 1 link
 

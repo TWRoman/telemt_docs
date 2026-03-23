@@ -542,6 +542,7 @@ fn quota_exceeded_for_user(stats: &Stats, user: &str, quota_limit: Option<u64>) 
     quota_limit.is_some_and(|quota| stats.get_user_total_octets(user) >= quota)
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 fn quota_would_be_exceeded_for_user(
     stats: &Stats,
     user: &str,

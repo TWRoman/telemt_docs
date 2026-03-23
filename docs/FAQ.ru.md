@@ -3,7 +3,7 @@
 1. Зайти в бота @MTProxybot.
 2. Ввести команду `/newproxy`
 3. Отправить IP и порт сервера. Например: 1.2.3.4:443
-4. Открыть конфиг `nano /etc/telemt.toml`.
+4. Открыть конфиг `nano /etc/telemt/telemt.toml`.
 5. Скопировать и отправить боту секрет пользователя из раздела [access.users].
 6. Скопировать полученный tag у бота. Например 1234567890abcdef1234567890abcdef.
 > [!WARNING]
@@ -32,6 +32,10 @@ use_middle_proxy = true
 hello = "ad_tag"
 hello2 = "ad_tag2"
 ```
+
+## Зачем нужен middle proxy (ME)
+https://github.com/telemt/telemt/discussions/167
+
 
 ## Сколько человек может пользоваться 1 ссылкой
 
