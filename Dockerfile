@@ -1,15 +1,17 @@
 # syntax=docker/dockerfile:1
 
-ARG BINARY
 ARG TARGETARCH
+ARG BINARY_AMD64
+ARG BINARY_ARM64
 
 # ==========================
-# Stage: minimal
+# Minimal Image
 # ==========================
 FROM debian:12-slim AS minimal
 
 ARG TARGETARCH
-ARG BINARY
+ARG BINARY_AMD64
+ARG BINARY_ARM64
 
 RUN set -eux; \
     apt-get update; \
@@ -18,8 +20,21 @@ RUN set -eux; \
         curl \
         xz-utils \
         ca-certificates; \
-    rm -rf /var/lib/apt/lists/*; \
-    \
+    rm -rf /var/lib/apt/lists/*
+
+# --- Select correct binary ---
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+        amd64) BIN="${BINARY_AMD64}" ;; \
+        arm64) BIN="${BINARY_ARM64}" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    echo "Using binary: $BIN"; \
+    test -f "$BIN"; \
+    cp "$BIN" /telemt
+
+# --- Install UPX (arch-aware) ---
+RUN set -eux; \
     case "${TARGETARCH}" in \
         amd64) UPX_ARCH="amd64" ;; \
         arm64) UPX_ARCH="arm64" ;; \
@@ -38,15 +53,14 @@ RUN set -eux; \
     install -m 0755 /tmp/upx*/upx /usr/local/bin/upx; \
     rm -rf /tmp/upx*
 
-COPY ${BINARY} /telemt
-
+# --- Optimize binary ---
 RUN set -eux; \
     test -f /telemt; \
     strip --strip-unneeded /telemt || true; \
     upx --best --lzma /telemt || true
 
 # ==========================
-# Debug image
+# Debug Image
 # ==========================
 FROM debian:12-slim AS debug
 
@@ -71,7 +85,7 @@ ENTRYPOINT ["/app/telemt"]
 CMD ["config.toml"]
 
 # ==========================
-# Production (distroless, for static MUSL binary)
+# Production Distroless on MUSL
 # ==========================
 FROM gcr.io/distroless/static-debian12 AS prod
 
