@@ -33,6 +33,7 @@ impl MePool {
         &self,
         addr: SocketAddr,
         uptime: Duration,
+        reason: &'static str,
     ) {
         if uptime > Duration::from_secs(ME_FLAP_UPTIME_THRESHOLD_SECS) {
             return;
@@ -45,6 +46,7 @@ impl MePool {
         self.stats.increment_me_endpoint_quarantine_total();
         warn!(
             %addr,
+            reason,
             uptime_ms = uptime.as_millis(),
             quarantine_secs = ME_FLAP_QUARANTINE_SECS,
             "ME endpoint temporarily quarantined due to rapid writer flap"

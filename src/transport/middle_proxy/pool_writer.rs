@@ -609,8 +609,21 @@ impl MePool {
         }
         if let Some(addr) = removed_addr {
             if let Some(uptime) = removed_uptime {
-                // Quarantine flapping endpoints regardless of draining state.
-                self.maybe_quarantine_flapping_endpoint(addr, uptime).await;
+                // Quarantine contract: only unexpected removals are considered endpoint flap.
+                if trigger_refill {
+                    self.stats
+                        .increment_me_endpoint_quarantine_unexpected_total();
+                    self.maybe_quarantine_flapping_endpoint(addr, uptime, "unexpected")
+                        .await;
+                } else {
+                    self.stats
+                        .increment_me_endpoint_quarantine_draining_suppressed_total();
+                    debug!(
+                        %addr,
+                        uptime_ms = uptime.as_millis(),
+                        "Skipping endpoint quarantine for draining writer removal"
+                    );
+                }
             }
             if trigger_refill && let Some(writer_dc) = removed_dc {
                 self.trigger_immediate_refill_for_dc(addr, writer_dc);

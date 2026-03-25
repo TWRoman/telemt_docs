@@ -128,6 +128,8 @@ pub struct Stats {
     me_crc_mismatch: AtomicU64,
     me_seq_mismatch: AtomicU64,
     me_endpoint_quarantine_total: AtomicU64,
+    me_endpoint_quarantine_unexpected_total: AtomicU64,
+    me_endpoint_quarantine_draining_suppressed_total: AtomicU64,
     me_kdf_drift_total: AtomicU64,
     me_kdf_port_only_drift_total: AtomicU64,
     me_hardswap_pending_reuse_total: AtomicU64,
@@ -1251,6 +1253,18 @@ impl Stats {
                 .fetch_add(1, Ordering::Relaxed);
         }
     }
+    pub fn increment_me_endpoint_quarantine_unexpected_total(&self) {
+        if self.telemetry_me_allows_normal() {
+            self.me_endpoint_quarantine_unexpected_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
+    pub fn increment_me_endpoint_quarantine_draining_suppressed_total(&self) {
+        if self.telemetry_me_allows_normal() {
+            self.me_endpoint_quarantine_draining_suppressed_total
+                .fetch_add(1, Ordering::Relaxed);
+        }
+    }
     pub fn increment_me_kdf_drift_total(&self) {
         if self.telemetry_me_allows_normal() {
             self.me_kdf_drift_total.fetch_add(1, Ordering::Relaxed);
@@ -1502,6 +1516,14 @@ impl Stats {
     }
     pub fn get_me_endpoint_quarantine_total(&self) -> u64 {
         self.me_endpoint_quarantine_total.load(Ordering::Relaxed)
+    }
+    pub fn get_me_endpoint_quarantine_unexpected_total(&self) -> u64 {
+        self.me_endpoint_quarantine_unexpected_total
+            .load(Ordering::Relaxed)
+    }
+    pub fn get_me_endpoint_quarantine_draining_suppressed_total(&self) -> u64 {
+        self.me_endpoint_quarantine_draining_suppressed_total
+            .load(Ordering::Relaxed)
     }
     pub fn get_me_kdf_drift_total(&self) -> u64 {
         self.me_kdf_drift_total.load(Ordering::Relaxed)

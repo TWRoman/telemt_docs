@@ -173,10 +173,15 @@ async fn bind_conn_to_writer(pool: &Arc<MePool>, writer_id: u64, port: u16) -> u
 }
 
 #[tokio::test]
-async fn remove_draining_writer_still_quarantines_flapping_endpoint() {
+async fn remove_draining_writer_does_not_quarantine_flapping_endpoint() {
     let pool = make_pool().await;
     let writer_id = 77;
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 12, 0, 77)), 443);
+    let before_total = pool.stats.get_me_endpoint_quarantine_total();
+    let before_unexpected = pool.stats.get_me_endpoint_quarantine_unexpected_total();
+    let before_suppressed = pool
+        .stats
+        .get_me_endpoint_quarantine_draining_suppressed_total();
     insert_writer(
         &pool,
         writer_id,
@@ -200,8 +205,18 @@ async fn remove_draining_writer_still_quarantines_flapping_endpoint() {
         "writer must be removed from pool after cleanup"
     );
     assert!(
-        pool.is_endpoint_quarantined(addr).await,
-        "draining removals must still quarantine flapping endpoints"
+        !pool.is_endpoint_quarantined(addr).await,
+        "draining removals must not quarantine endpoint"
+    );
+    assert_eq!(pool.stats.get_me_endpoint_quarantine_total(), before_total);
+    assert_eq!(
+        pool.stats.get_me_endpoint_quarantine_unexpected_total(),
+        before_unexpected
+    );
+    assert_eq!(
+        pool.stats
+            .get_me_endpoint_quarantine_draining_suppressed_total(),
+        before_suppressed + 1
     );
     assert_eq!(pool.conn_count.load(Ordering::Relaxed), 0);
 }
@@ -257,16 +272,21 @@ async fn edge_draining_only_detach_rejects_active_writer() {
 }
 
 #[tokio::test]
-async fn adversarial_blackhat_single_remove_establishes_single_quarantine_entry() {
+async fn adversarial_blackhat_single_unexpected_remove_establishes_single_quarantine_entry() {
     let pool = make_pool().await;
     let writer_id = 93;
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 12, 0, 93)), 443);
+    let before_total = pool.stats.get_me_endpoint_quarantine_total();
+    let before_unexpected = pool.stats.get_me_endpoint_quarantine_unexpected_total();
+    let before_suppressed = pool
+        .stats
+        .get_me_endpoint_quarantine_draining_suppressed_total();
     insert_writer(
         &pool,
         writer_id,
         2,
         addr,
-        true,
+        false,
         Instant::now() - Duration::from_secs(1),
     )
     .await;
@@ -274,6 +294,19 @@ async fn adversarial_blackhat_single_remove_establishes_single_quarantine_entry(
     pool.remove_writer_and_close_clients(writer_id).await;
     assert!(pool.is_endpoint_quarantined(addr).await);
     assert_eq!(pool.endpoint_quarantine.lock().await.len(), 1);
+    assert_eq!(
+        pool.stats.get_me_endpoint_quarantine_total(),
+        before_total + 1
+    );
+    assert_eq!(
+        pool.stats.get_me_endpoint_quarantine_unexpected_total(),
+        before_unexpected + 1
+    );
+    assert_eq!(
+        pool.stats
+            .get_me_endpoint_quarantine_draining_suppressed_total(),
+        before_suppressed
+    );
 }
 
 #[tokio::test]
