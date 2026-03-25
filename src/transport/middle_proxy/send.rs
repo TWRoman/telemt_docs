@@ -71,8 +71,11 @@ impl MePool {
                 },
             )
         };
-        let no_writer_mode =
-            MeRouteNoWriterMode::from_u8(self.me_route_no_writer_mode.load(Ordering::Relaxed));
+        let no_writer_mode = MeRouteNoWriterMode::from_u8(
+            self.route_runtime
+                .me_route_no_writer_mode
+                .load(Ordering::Relaxed),
+        );
         let (routed_dc, unknown_target_dc) =
             self.resolve_target_dc_for_routing(target_dc as i32).await;
         let mut no_writer_deadline: Option<Instant> = None;
@@ -81,7 +84,10 @@ impl MePool {
         let mut hybrid_recovery_round = 0u32;
         let mut hybrid_last_recovery_at: Option<Instant> = None;
         let mut hybrid_total_deadline: Option<Instant> = None;
-        let hybrid_wait_step = self.me_route_no_writer_wait.max(Duration::from_millis(50));
+        let hybrid_wait_step = self
+            .route_runtime
+            .me_route_no_writer_wait
+            .max(Duration::from_millis(50));
         let mut hybrid_wait_current = hybrid_wait_step;
 
         loop {
@@ -126,7 +132,7 @@ impl MePool {
                     match no_writer_mode {
                         MeRouteNoWriterMode::AsyncRecoveryFailfast => {
                             let deadline = *no_writer_deadline.get_or_insert_with(|| {
-                                Instant::now() + self.me_route_no_writer_wait
+                                Instant::now() + self.route_runtime.me_route_no_writer_wait
                             });
                             if !async_recovery_triggered && !unknown_target_dc {
                                 let triggered =
@@ -147,7 +153,8 @@ impl MePool {
                         MeRouteNoWriterMode::InlineRecoveryLegacy => {
                             self.stats.increment_me_inline_recovery_total();
                             if !unknown_target_dc {
-                                for _ in 0..self.me_route_inline_recovery_attempts.max(1) {
+                                for _ in 0..self.route_runtime.me_route_inline_recovery_attempts.max(1)
+                                {
                                     for family in self.family_order() {
                                         let map = match family {
                                             IpFamily::V4 => self.proxy_map_v4.read().await.clone(),
@@ -176,7 +183,7 @@ impl MePool {
                                 continue;
                             }
                             let deadline = *no_writer_deadline.get_or_insert_with(|| {
-                                Instant::now() + self.me_route_inline_recovery_wait
+                                Instant::now() + self.route_runtime.me_route_inline_recovery_wait
                             });
                             if !self.wait_for_writer_until(deadline).await {
                                 if !self.writers.read().await.is_empty() {
@@ -231,8 +238,9 @@ impl MePool {
                 let pick_mode = self.writer_pick_mode();
                 match no_writer_mode {
                     MeRouteNoWriterMode::AsyncRecoveryFailfast => {
-                        let deadline = *no_writer_deadline
-                            .get_or_insert_with(|| Instant::now() + self.me_route_no_writer_wait);
+                        let deadline = *no_writer_deadline.get_or_insert_with(|| {
+                            Instant::now() + self.route_runtime.me_route_no_writer_wait
+                        });
                         if !async_recovery_triggered && !unknown_target_dc {
                             let triggered =
                                 self.trigger_async_recovery_for_target_dc(routed_dc).await;
@@ -255,7 +263,7 @@ impl MePool {
                         self.stats.increment_me_inline_recovery_total();
                         if unknown_target_dc {
                             let deadline = *no_writer_deadline.get_or_insert_with(|| {
-                                Instant::now() + self.me_route_inline_recovery_wait
+                                Instant::now() + self.route_runtime.me_route_inline_recovery_wait
                             });
                             if self.wait_for_candidate_until(routed_dc, deadline).await {
                                 continue;
@@ -267,7 +275,9 @@ impl MePool {
                                 "No ME writers available for target DC".into(),
                             ));
                         }
-                        if emergency_attempts >= self.me_route_inline_recovery_attempts.max(1) {
+                        if emergency_attempts
+                            >= self.route_runtime.me_route_inline_recovery_attempts.max(1)
+                        {
                             self.stats
                                 .increment_me_writer_pick_no_candidate_total(pick_mode);
                             self.stats.increment_me_no_writer_failfast_total();
@@ -480,7 +490,8 @@ impl MePool {
                 .increment_me_writer_pick_blocking_fallback_total();
             let effective_our_addr = SocketAddr::new(w.source_ip, our_addr.port());
             let (payload, meta) = build_routed_payload(effective_our_addr);
-            let reserve_result = if let Some(timeout) = self.me_route_blocking_send_timeout {
+            let reserve_result = if let Some(timeout) = self.route_runtime.me_route_blocking_send_timeout
+            {
                 match tokio::time::timeout(timeout, w.tx.clone().reserve_owned()).await {
                     Ok(result) => result,
                     Err(_) => {
@@ -646,9 +657,15 @@ impl MePool {
     }
 
     fn hybrid_total_wait_budget(&self) -> Duration {
-        let base = self.me_route_hybrid_max_wait.max(Duration::from_millis(50));
+        let base = self
+            .route_runtime
+            .me_route_hybrid_max_wait
+            .max(Duration::from_millis(50));
         let now_ms = Self::now_epoch_millis();
-        let last_success_ms = self.me_route_last_success_epoch_ms.load(Ordering::Relaxed);
+        let last_success_ms = self
+            .route_runtime
+            .me_route_last_success_epoch_ms
+            .load(Ordering::Relaxed);
         if last_success_ms != 0
             && now_ms.saturating_sub(last_success_ms) <= HYBRID_RECENT_SUCCESS_WINDOW_MS
         {
@@ -658,7 +675,8 @@ impl MePool {
     }
 
     fn note_hybrid_route_success(&self) {
-        self.me_route_last_success_epoch_ms
+        self.route_runtime
+            .me_route_last_success_epoch_ms
             .store(Self::now_epoch_millis(), Ordering::Relaxed);
     }
 
@@ -666,10 +684,14 @@ impl MePool {
         self.stats.increment_me_hybrid_timeout_total();
         let now_ms = Self::now_epoch_millis();
         let mut last_warn_ms = self
+            .route_runtime
             .me_route_hybrid_timeout_warn_epoch_ms
             .load(Ordering::Relaxed);
         while now_ms.saturating_sub(last_warn_ms) >= HYBRID_TIMEOUT_WARN_RATE_LIMIT_MS {
-            match self.me_route_hybrid_timeout_warn_epoch_ms.compare_exchange_weak(
+            match self
+                .route_runtime
+                .me_route_hybrid_timeout_warn_epoch_ms
+                .compare_exchange_weak(
                 last_warn_ms,
                 now_ms,
                 Ordering::AcqRel,
@@ -692,13 +714,17 @@ impl MePool {
     fn try_consume_hybrid_recovery_trigger_slot(&self, min_interval_ms: u64) -> bool {
         let now_ms = Self::now_epoch_millis();
         let mut last_trigger_ms = self
+            .route_runtime
             .me_async_recovery_last_trigger_epoch_ms
             .load(Ordering::Relaxed);
         loop {
             if now_ms.saturating_sub(last_trigger_ms) < min_interval_ms {
                 return false;
             }
-            match self.me_async_recovery_last_trigger_epoch_ms.compare_exchange_weak(
+            match self
+                .route_runtime
+                .me_async_recovery_last_trigger_epoch_ms
+                .compare_exchange_weak(
                 last_trigger_ms,
                 now_ms,
                 Ordering::AcqRel,

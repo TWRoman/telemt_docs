@@ -284,11 +284,24 @@ pub(super) struct WriterLifecycleCore {
     pub(super) writer_cmd_channel_capacity: usize,
 }
 
+pub(super) struct RouteRuntimeCore {
+    pub(super) me_route_no_writer_mode: AtomicU8,
+    pub(super) me_route_no_writer_wait: Duration,
+    pub(super) me_route_hybrid_max_wait: Duration,
+    pub(super) me_route_blocking_send_timeout: Option<Duration>,
+    pub(super) me_route_last_success_epoch_ms: AtomicU64,
+    pub(super) me_route_hybrid_timeout_warn_epoch_ms: AtomicU64,
+    pub(super) me_async_recovery_last_trigger_epoch_ms: AtomicU64,
+    pub(super) me_route_inline_recovery_attempts: u32,
+    pub(super) me_route_inline_recovery_wait: Duration,
+}
+
 #[allow(dead_code)]
 pub struct MePool {
     pub(super) routing: Arc<RoutingCore>,
     pub(super) reinit: Arc<ReinitCore>,
     pub(super) writer_lifecycle: Arc<WriterLifecycleCore>,
+    pub(super) route_runtime: Arc<RouteRuntimeCore>,
     pub(super) decision: NetworkDecision,
     pub(super) upstream: Option<Arc<UpstreamManager>>,
     pub(super) rng: Arc<SecureRandom>,
@@ -382,15 +395,6 @@ pub struct MePool {
     pub(super) me_writer_pick_sample_size: AtomicU8,
     pub(super) me_socks_kdf_policy: AtomicU8,
     pub(super) me_reader_route_data_wait_ms: Arc<AtomicU64>,
-    pub(super) me_route_no_writer_mode: AtomicU8,
-    pub(super) me_route_no_writer_wait: Duration,
-    pub(super) me_route_hybrid_max_wait: Duration,
-    pub(super) me_route_blocking_send_timeout: Option<Duration>,
-    pub(super) me_route_last_success_epoch_ms: AtomicU64,
-    pub(super) me_route_hybrid_timeout_warn_epoch_ms: AtomicU64,
-    pub(super) me_async_recovery_last_trigger_epoch_ms: AtomicU64,
-    pub(super) me_route_inline_recovery_attempts: u32,
-    pub(super) me_route_inline_recovery_wait: Duration,
     pub(super) me_health_interval_ms_unhealthy: AtomicU64,
     pub(super) me_health_interval_ms_healthy: AtomicU64,
     pub(super) me_warn_rate_limit_ms: AtomicU64,
@@ -568,6 +572,23 @@ impl MePool {
                 rpc_proxy_req_every_secs: AtomicU64::new(rpc_proxy_req_every_secs),
                 writer_cmd_channel_capacity: me_writer_cmd_channel_capacity.max(1),
             }),
+            route_runtime: Arc::new(RouteRuntimeCore {
+                me_route_no_writer_mode: AtomicU8::new(me_route_no_writer_mode.as_u8()),
+                me_route_no_writer_wait: Duration::from_millis(me_route_no_writer_wait_ms),
+                me_route_hybrid_max_wait: Duration::from_millis(me_route_hybrid_max_wait_ms.max(50)),
+                me_route_blocking_send_timeout: if me_route_blocking_send_timeout_ms == 0 {
+                    None
+                } else {
+                    Some(Duration::from_millis(
+                        me_route_blocking_send_timeout_ms.min(5_000),
+                    ))
+                },
+                me_route_last_success_epoch_ms: AtomicU64::new(0),
+                me_route_hybrid_timeout_warn_epoch_ms: AtomicU64::new(0),
+                me_async_recovery_last_trigger_epoch_ms: AtomicU64::new(0),
+                me_route_inline_recovery_attempts,
+                me_route_inline_recovery_wait: Duration::from_millis(me_route_inline_recovery_wait_ms),
+            }),
             decision,
             upstream,
             rng,
@@ -721,21 +742,6 @@ impl MePool {
             me_writer_pick_sample_size: AtomicU8::new(me_writer_pick_sample_size.clamp(2, 4)),
             me_socks_kdf_policy: AtomicU8::new(me_socks_kdf_policy.as_u8()),
             me_reader_route_data_wait_ms: Arc::new(AtomicU64::new(me_reader_route_data_wait_ms)),
-            me_route_no_writer_mode: AtomicU8::new(me_route_no_writer_mode.as_u8()),
-            me_route_no_writer_wait: Duration::from_millis(me_route_no_writer_wait_ms),
-            me_route_hybrid_max_wait: Duration::from_millis(me_route_hybrid_max_wait_ms.max(50)),
-            me_route_blocking_send_timeout: if me_route_blocking_send_timeout_ms == 0 {
-                None
-            } else {
-                Some(Duration::from_millis(
-                    me_route_blocking_send_timeout_ms.min(5_000),
-                ))
-            },
-            me_route_last_success_epoch_ms: AtomicU64::new(0),
-            me_route_hybrid_timeout_warn_epoch_ms: AtomicU64::new(0),
-            me_async_recovery_last_trigger_epoch_ms: AtomicU64::new(0),
-            me_route_inline_recovery_attempts,
-            me_route_inline_recovery_wait: Duration::from_millis(me_route_inline_recovery_wait_ms),
             me_health_interval_ms_unhealthy: AtomicU64::new(me_health_interval_ms_unhealthy.max(1)),
             me_health_interval_ms_healthy: AtomicU64::new(me_health_interval_ms_healthy.max(1)),
             me_warn_rate_limit_ms: AtomicU64::new(me_warn_rate_limit_ms.max(1)),
