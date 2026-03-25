@@ -171,6 +171,9 @@ async fn rpc_proxy_req_signal_loop(
     rpc_proxy_req_every_secs: u64,
 ) {
     if rpc_proxy_req_every_secs == 0 {
+        // Disabled service signal loop must stay parked until writer cancellation.
+        // Returning immediately here would complete `select!` and tear down writer lifecycle.
+        cancel_signal.cancelled().await;
         return;
     }
 

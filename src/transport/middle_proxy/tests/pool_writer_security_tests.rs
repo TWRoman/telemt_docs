@@ -35,7 +35,7 @@ async fn make_pool() -> Arc<MePool> {
         NetworkDecision::default(),
         None,
         Arc::new(SecureRandom::new()),
-        Arc::new(Stats::default()),
+        Arc::new(Stats::new()),
         general.me_keepalive_enabled,
         general.me_keepalive_interval_secs,
         general.me_keepalive_jitter_secs,
