@@ -2,66 +2,14 @@
 
 ***Löst Probleme, bevor andere überhaupt wissen, dass sie existieren*** / ***It solves problems before others even realize they exist***
 
+[**Telemt Chat in Telegram**](https://t.me/telemtrs)
+
 **Telemt** is a fast, secure, and feature-rich server written in Rust: it fully implements the official Telegram proxy algo and adds many production-ready improvements such as:
 - [ME Pool + Reader/Writer + Registry + Refill + Adaptive Floor + Trio-State + Generation Lifecycle](https://github.com/telemt/telemt/blob/main/docs/model/MODEL.en.md)
 - [Full-covered API w/ management](https://github.com/telemt/telemt/blob/main/docs/API.md)
 - Anti-Replay on Sliding Window
 - Prometheus-format Metrics
 - TLS-Fronting and TCP-Splicing for masking from "prying" eyes
-
-[**Telemt Chat in Telegram**](https://t.me/telemtrs)
-
-## NEWS and EMERGENCY
-### ✈️ Telemt 3 is released!
-<table>
-<tr>
-<td width="50%" valign="top">
-
-### 🇷🇺 RU
-
-#### О релизах
-
-[3.3.27](https://github.com/telemt/telemt/releases/tag/3.3.27) даёт баланс стабильности и передового функционала, а так же последние исправления по безопасности и багам
-
-Будем рады вашему фидбеку и предложениям по улучшению — особенно в части **API**, **статистики**, **UX**
-
----
-
-Если у вас есть компетенции в:
-
-- Асинхронных сетевых приложениях  
-- Анализе трафика  
-- Реверс-инжиниринге  
-- Сетевых расследованиях  
-
-Мы открыты к архитектурным предложениям, идеям и pull requests
-</td>
-<td width="50%" valign="top">
-
-### 🇬🇧 EN
-
-#### About releases
-
-[3.3.27](https://github.com/telemt/telemt/releases/tag/3.3.27) provides a balance of stability and advanced functionality, as well as the latest security and bug fixes
-
-We are looking forward to your feedback and improvement proposals — especially regarding **API**, **statistics**, **UX**
-
----
-
-If you have expertise in:
-
-- Asynchronous network applications  
-- Traffic analysis  
-- Reverse engineering  
-- Network forensics  
-
-We welcome ideas, architectural feedback, and pull requests.
-</td>
-</tr>
-</table>
-
-# Features
-💥 The configuration structure has changed since version 1.1.0.0. change it in your environment!
 
 ⚓ Our implementation of **TLS-fronting** is one of the most deeply debugged, focused, advanced and *almost* **"behaviorally consistent to real"**:  we are confident we have it right - [see evidence on our validation and traces](#recognizability-for-dpi-and-crawler)
 
