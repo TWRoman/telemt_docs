@@ -6,7 +6,7 @@
 >
 > Исправленный TLS ClientHello доступен в **Telegram Desktop** начиная с версии **6.7.2**: для работы с EE-MTProxy обновите клиент.
 >
-> Исправленный TLS ClientHello для **Telegram Android** начиная с версии **12.6.4**; **официальный релиз для iOS находится в процессе разработки**.
+> Исправленный TLS ClientHello доступен в **Telegram Android** начиная с версии **12.6.4**; **официальный релиз для iOS находится в процессе разработки**.
 
 <p align="center">
   <a href="https://t.me/telemtrs">
